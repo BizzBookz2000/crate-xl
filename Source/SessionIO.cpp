@@ -261,6 +261,7 @@ struct Serializer
     {
         var o = obj();
         set (o, "name", pad.name);
+        set (o, "colour", pad.colour.toString());
         set (o, "padNote", pad.padNote);
         set (o, "keysMode", pad.keysMode);
         set (o, "choke", pad.choke);
@@ -280,6 +281,7 @@ struct Serializer
     void varToPad (const var& o, cr::Pad& pad, const SampleIn& sampleIn)
     {
         pad.name = o.getProperty ("name", "").toString();
+        pad.colour = juce::Colour::fromString (o.getProperty ("colour", "0").toString());
         pad.padNote = o.getProperty ("padNote", 60);
         pad.keysMode = o.getProperty ("keysMode", false);
         pad.choke = o.getProperty ("choke", 0);
@@ -572,6 +574,7 @@ void Engine::pastePad (int b, int p)
         if (pad.instrument) retirePlugin (std::move (pad.instrument));
         const auto chName = pad.channel.name;
         pad.name = fresh.name;
+        pad.colour = fresh.colour;
         pad.layers = std::move (fresh.layers);
         pad.instrument = std::move (fresh.instrument);
         pad.padNote = fresh.padNote; pad.keysMode = fresh.keysMode; pad.choke = fresh.choke; pad.link = fresh.link; pad.midi = fresh.midi;
@@ -622,6 +625,7 @@ void Engine::restorePadEntry (const UndoEntry& e)
         for (auto& l : pad.layers) for (auto& z : l.zones) retire (z.sample);
         if (pad.instrument) retirePlugin (std::move (pad.instrument));
         pad.name = fresh.name;
+        pad.colour = fresh.colour;
         pad.layers = std::move (fresh.layers);
         pad.instrument = std::move (fresh.instrument);
         pad.padNote = fresh.padNote; pad.keysMode = fresh.keysMode; pad.choke = fresh.choke; pad.link = fresh.link; pad.midi = fresh.midi;

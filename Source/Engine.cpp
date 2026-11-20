@@ -133,6 +133,7 @@ void Engine::initialiseBank (int b)
         for (auto& l : pad.layers) for (auto& f : l.fx) if (f.plugin) retirePlugin (std::move (f.plugin));
         pad.layers.clear();
         pad.name.clear();
+        pad.colour = {};
         pad.padNote = 60;
         pad.keysMode = false;
         pad.choke = pad.link = 0;

@@ -92,7 +92,8 @@ target_sources(Crate PRIVATE
     Source/MixerView.cpp
     Source/Panels.cpp
     Source/Settings.cpp
-    Source/Dialogs.cpp)
+    Source/Dialogs.cpp
+    Source/StarterKit.cpp)
 
 set(CRATE_USE_ASIO 0)
 if(WIN32 AND CRATE_ASIO_SDK AND EXISTS "${CRATE_ASIO_SDK}/common/iasiodrv.h")
@@ -117,6 +118,11 @@ target_link_libraries(Crate
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+if(UNIX AND NOT APPLE)
+    find_package(OpenGL REQUIRED)
+    target_link_libraries(Crate PRIVATE OpenGL::GL)
+endif()
 
 # ---------------------------------------------------------------------------
 # Optional headless engine tests:  cmake -DCRATE_BUILD_TESTS=ON

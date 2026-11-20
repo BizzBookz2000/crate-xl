@@ -275,6 +275,7 @@ struct PadMidi
 struct Pad
 {
     juce::String name;
+    juce::Colour colour;    // transparent = use the bank colour
     std::vector<Layer> layers;
     std::unique_ptr<juce::AudioPluginInstance> instrument;  // VST3 / AU instrument on this pad
     int padNote = 60;       // note played when the pad is hit (C3 = original pitch)
