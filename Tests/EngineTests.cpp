@@ -1,0 +1,461 @@
+// Headless engine tests: cmake -DCRATE_BUILD_TESTS=ON, then run CrateTests.
+#include <JuceHeader.h>
+#include "../Source/Engine.h"
+#include "../Source/Stretch.h"
+#include "../Source/FileUtils.h"
+
+namespace
+{
+int failures = 0, checks = 0;
+void check (bool ok, const juce::String& what)
+{
+    ++checks;
+    if (! ok) { ++failures; std::cout << "  FAIL: " << what << std::endl; }
+    else std::cout << "  ok:   " << what << std::endl;
+}
+
+constexpr double sr = 48000.0;
+constexpr int block = 256;
+
+juce::File tempDir()
+{
+    static auto d = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("CrateTests");
+    return d;
+}
+
+juce::File makeWav (const juce::String& name, double freq, double seconds, float amp = 0.8f, bool clickEveryBeat = false, double bpm = 120.0)
+{
+    auto f = tempDir().getChildFile (name + ".wav");
+    juce::AudioBuffer<float> b (2, (int) (seconds * sr));
+    for (int i = 0; i < b.getNumSamples(); ++i)
+    {
+        float v = amp * (float) std::sin (juce::MathConstants<double>::twoPi * freq * i / sr);
+        if (clickEveryBeat)
+        {
+            const int beatLen = (int) (60.0 / bpm * sr);
+            v = (i % beatLen) < 2000 ? amp * (float) std::sin (juce::MathConstants<double>::twoPi * 200.0 * i / sr) : 0.0f;
+        }
+        b.setSample (0, i, v);
+        b.setSample (1, i, v);
+    }
+    if (auto w = createWavWriter (f, sr, 2, 24)) w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+    return f;
+}
+
+juce::AudioBuffer<float> render (Engine& e, double seconds)
+{
+    const int total = (int) (seconds * sr);
+    juce::AudioBuffer<float> out (2, total), blk (2, block);
+    int done = 0;
+    while (done < total)
+    {
+        const int n = juce::jmin (block, total - done);
+        e.renderOffline (blk, n);
+        for (int c = 0; c < 2; ++c) out.copyFrom (c, done, blk, c, 0, n);
+        done += n;
+    }
+    return out;
+}
+
+// counts note starts: silence -> sound transitions
+int countOnsets (const juce::AudioBuffer<float>& b, float thr = 0.02f, int minGap = 1200)
+{
+    int count = 0, lastOn = -minGap * 2;
+    float env = 0.0f;
+    bool on = false;
+    for (int i = 0; i < b.getNumSamples(); ++i)
+    {
+        env = juce::jmax (std::abs (b.getSample (0, i)), env * 0.995f);
+        if (! on && env > thr && i - lastOn > minGap) { ++count; on = true; lastOn = i; }
+        else if (on && env < thr * 0.3f) on = false;
+    }
+    return count;
+}
+
+int zeroCrossings (const juce::AudioBuffer<float>& b, int from, int to)
+{
+    int z = 0;
+    for (int i = from + 1; i < to; ++i) if ((b.getSample (0, i - 1) <= 0.0f) != (b.getSample (0, i) <= 0.0f)) ++z;
+    return z;
+}
+
+void pumpMessages (int ms)
+{
+    const auto end = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+    while (juce::Time::getMillisecondCounter() < end) juce::Thread::sleep (10);
+}
+} // namespace
+
+int main()
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    tempDir().deleteRecursively();
+    tempDir().createDirectory();
+    auto sine = makeWav ("sine440", 440.0, 1.0);
+    auto loop = makeWav ("loop", 0.0, 2.0, 0.8f, true, 120.0);
+
+    Engine e (false);
+    e.prepareOffline (sr, block);
+    e.behaviours.defaultGainDb = 0.0f;
+
+    std::cout << "Pads and voices" << std::endl;
+    {
+        check (e.loadSampleToPad (sine, 0, 0), "load sample onto pad");
+        e.padDown (0, 0, 1.0f);
+        auto out = render (e, 0.2);
+        check (out.getMagnitude (0, out.getNumSamples()) > 0.3f, "pad plays audio");
+        e.padUp (0, 0);
+        render (e, 1.2);
+        auto quiet = render (e, 0.1);
+        check (quiet.getMagnitude (0, quiet.getNumSamples()) < 0.001f, "one-shot ends at sample end");
+    }
+
+    std::cout << "Keys mode pitch" << std::endl;
+    {
+        e.padDown (0, 0, 1.0f, 72);
+        auto out = render (e, 0.3);
+        e.padUp (0, 0, 72);
+        const int zc = zeroCrossings (out, 2000, 2000 + 4800);   // 0.1 s
+        check (std::abs (zc - 176) < 8, "C4 plays an octave up (" + juce::String (zc) + " crossings, want ~176)");
+        render (e, 1.0);
+    }
+
+    std::cout << "Choke group" << std::endl;
+    {
+        e.loadSampleToPad (sine, 0, 1);
+        {
+            const juce::ScopedLock sl (e.getLock());
+            e.session().banks[0].pads[0].choke = 1;
+            e.session().banks[0].pads[1].choke = 1;
+            e.session().banks[0].pads[1].layers[0].p.gainDb = -60.0f;
+        }
+        e.padDown (0, 0, 1.0f);
+        render (e, 0.05);
+        e.padDown (0, 1, 1.0f);
+        auto out = render (e, 0.1);
+        check (out.getMagnitude (0, 2400, 2400) < 0.01f, "choked pad stops");
+        {
+            const juce::ScopedLock sl (e.getLock());
+            e.session().banks[0].pads[0].choke = 0;
+            e.session().banks[0].pads[1].choke = 0;
+        }
+        render (e, 1.2);
+    }
+
+    std::cout << "Velocity zones" << std::endl;
+    {
+        auto low = makeWav ("low", 220.0, 0.5);
+        e.loadSampleToPad (low, 0, 2);
+        e.loadSampleToPad (sine, 0, 2, Engine::LoadMethod::addToLayer);
+        {
+            const juce::ScopedLock sl (e.getLock());
+            auto& zones = e.session().banks[0].pads[2].layers[0].zones;
+            check (zones.size() == 2, "second zone added to the layer");
+            zones[0].highVel = 63;
+            zones[1].lowVel = 64;
+        }
+        e.padDown (0, 2, 0.3f);
+        auto soft = render (e, 0.2);
+        e.padUp (0, 2);
+        render (e, 0.6);
+        e.padDown (0, 2, 1.0f);
+        auto hard = render (e, 0.2);
+        render (e, 1.1);
+        const int zs = zeroCrossings (soft, 2000, 6800), zh = zeroCrossings (hard, 2000, 6800);
+        check (zs < zh && std::abs (zh - 2 * zs) < 10, "velocity picks the zone (" + juce::String (zs) + " vs " + juce::String (zh) + ")");
+    }
+
+    std::cout << "Pattern playback" << std::endl;
+    {
+        e.setBpm (120.0);
+        {
+            const juce::ScopedLock sl (e.getLock());
+            auto& bank = e.session().banks[0];
+            bank.patterns[0].notes.clear();
+            for (int i = 0; i < 4; ++i) bank.patterns[0].notes.push_back ({ 0, -1, i * cr::ppq, cr::ppq / 4, 1.0f });
+            bank.pads[0].layers[0].p.trigger = cr::TriggerMode::hold;
+        }
+        e.launchPattern (0, 0);
+        e.play();
+        auto out = render (e, 2.0);   // one bar at 120
+        e.stop();
+        render (e, 0.2);
+        check (countOnsets (out) == 4, "4 notes in one bar (" + juce::String (countOnsets (out)) + ")");
+    }
+
+    std::cout << "Note repeat" << std::endl;
+    {
+        e.repeatSlot = 3;   // 1/16
+        e.padDown (0, 0, 1.0f);
+        auto out = render (e, 1.0);   // 2 beats = 8 sixteenths
+        e.padUp (0, 0);
+        e.repeatSlot = -1;
+        render (e, 0.5);
+        const int n = countOnsets (out, 0.02f, 600);
+        check (n >= 7 && n <= 9, "repeat retriggers every 1/16 (" + juce::String (n) + ")");
+    }
+
+    std::cout << "Song clips loop their pattern" << std::endl;
+    {
+        {
+            const juce::ScopedLock sl (e.getLock());
+            auto& bank = e.session().banks[0];
+            bank.patterns[0].notes = { { 0, -1, 0, cr::ppq / 4, 1.0f } };
+            bank.patterns[0].length = cr::barTicks();
+            e.session().song = { { 0, 0, 0, 2 * cr::barTicks() } };
+        }
+        e.playSong();
+        e.setPosition (0);
+        e.play();
+        auto out = render (e, 4.2);
+        e.stop();
+        render (e, 0.2);
+        check (countOnsets (out) == 2, "2-bar clip plays the 1-bar pattern twice (" + juce::String (countOnsets (out)) + ")");
+    }
+
+    std::cout << "Scenes launch on the bar" << std::endl;
+    {
+        e.addPattern (0, "B");
+        {
+            const juce::ScopedLock sl (e.getLock());
+            auto& bank = e.session().banks[0];
+            bank.patterns[1].notes = { { 0, -1, 0, 24, 1.0f }, { 0, -1, 2 * cr::ppq, 24, 1.0f } };
+        }
+        e.launchPattern (0, 0);
+        e.captureScene (0);
+        e.launchPattern (0, 1);
+        e.captureScene (1);
+        e.launchScene (0);
+        e.play();
+        render (e, 0.5);
+        e.launchScene (1);
+        check (e.session().banks[0].source == cr::TrackSource::pattern && e.session().banks[0].playingPattern == 0, "scene change waits for the bar");
+        render (e, 1.6);
+        check (e.session().banks[0].playingPattern == 1, "scene 2 playing after the bar line");
+        e.stop();
+        render (e, 0.2);
+    }
+
+    std::cout << "Live recording with quantize" << std::endl;
+    {
+        const int pi = e.addPattern (0, "Rec");
+        e.session().preRollBars = 0;
+        e.session().quantize = 2;
+        e.setPosition (0);
+        e.setRecording (true);
+        render (e, 0.26);   // a bit past beat 1 (0.25 s = 1/2 beat)
+        e.padDown (0, 3, 0.9f);
+        render (e, 0.1);
+        e.padUp (0, 3);
+        render (e, 0.4);
+        e.stop();
+        const auto& notes = e.session().banks[0].patterns[(size_t) pi].notes;
+        check (notes.size() == 1, "one note recorded");
+        if (! notes.empty()) check (notes[0].start % (cr::ppq / 4) == 0 && notes[0].start == cr::ppq / 2, "start quantised to 1/16 (" + juce::String (notes[0].start) + ")");
+        e.session().preRollBars = 1;
+    }
+
+    std::cout << "Mixer, automation, macros" << std::endl;
+    {
+        {
+            const juce::ScopedLock sl (e.getLock());
+            e.session().song.clear();
+            e.session().banks[0].pads[0].layers[0].p.trigger = cr::TriggerMode::oneShot;
+        }
+        e.setParamValue (cr::ParamAddress::parse ("bank/0/vol"), 0.0f);
+        e.padDown (0, 0, 1.0f);
+        auto out = render (e, 0.1);
+        check (out.getMagnitude (0, out.getNumSamples()) < 0.0001f, "bank volume 0 silences the bank");
+        render (e, 1.0);
+        e.bindMacro (0, "bank/0/vol");
+        e.setMacro (0, 1.0f);
+        check (std::abs (e.session().banks[0].strip.volume - 1.25f) < 0.001f, "macro drives its parameter");
+        e.setMacro (0, 0.64f);
+        juce::Thread::sleep (700);   // let the 'user is touching this knob' window expire
+        auto* lane = e.findOrCreateLane ("bank/0/vol", true, 0);
+        lane->points = { { 0, 0.0f }, { cr::barTicks(), 1.0f } };
+        e.playSong();
+        e.setPosition (0);
+        e.play();
+        render (e, 1.0);
+        const float v = e.session().banks[0].strip.volume;
+        check (v > 0.5f && v < 0.75f, "song automation moves the volume (" + juce::String (v) + ")");
+        e.stop();
+        e.session().songAutomation.clear();
+        e.setParamValue (cr::ParamAddress::parse ("bank/0/vol"), 0.8f);
+        auto a = cr::ParamAddress::parse ("lfx/3/4/1/2/5");
+        check (a.toString() == "lfx/3/4/1/2/5" && a.owner == cr::ParamAddress::Owner::layerFx, "param address round trip");
+    }
+
+    std::cout << "Effects" << std::endl;
+    {
+        for (auto& type : getBuiltinEffectTypes())
+        {
+            auto fx = createBuiltinEffect (type);
+            fx->prepare (sr, block);
+            juce::AudioBuffer<float> b (2, block);
+            bool finite = true;
+            for (int k = 0; k < 50; ++k)
+            {
+                for (int i = 0; i < block; ++i) { const float x = (float) std::sin (i * 0.05 + k); b.setSample (0, i, x); b.setSample (1, i, x); }
+                fx->process (b, block);
+                for (int i = 0; i < block; ++i) if (! std::isfinite (b.getSample (0, i))) finite = false;
+            }
+            check (finite, type + " is stable");
+        }
+    }
+
+    std::cout << "Sample editing" << std::endl;
+    {
+        auto len = [&e] { return e.session().banks[0].pads[0].layers[0].zones[0].sample->numFrames; };
+        const auto before = len();
+        check (e.editSample (0, 0, 0, 0, Engine::SampleEdit::cut, 0.0f, 0.5f), "cut");
+        check (std::abs ((double) len() - before * 0.5) < 2, "cut halves the length");
+        check (e.editSample (0, 0, 0, 0, Engine::SampleEdit::paste, 0.0f, 0.0f), "paste");
+        check (std::abs ((double) len() - before) < 3, "paste restores the length");
+        e.editSample (0, 0, 0, 0, Engine::SampleEdit::gain, 0.0f, 1.0f, -12.0);
+        e.editSample (0, 0, 0, 0, Engine::SampleEdit::normalize, 0.0f, 1.0f);
+        check (std::abs (e.session().banks[0].pads[0].layers[0].zones[0].sample->buffer.getMagnitude (0, 0, (int) len()) - 0.98f) < 0.01f, "normalize to -0.2 dB");
+        e.editSample (0, 0, 0, 0, Engine::SampleEdit::trim, 0.25f, 0.75f);
+        check (std::abs ((double) len() - before * 0.5) < 3, "trim keeps the selection");
+        check (e.undo(), "undo the trim");
+        check (std::abs ((double) len() - before) < 3, "undo restores the sample");
+        e.editSample (0, 0, 0, 0, Engine::SampleEdit::stretch, 0.0f, 1.0f, 2.0);
+        check (std::abs ((double) len() - before * 2.0) < 10, "time stretch x2");
+        e.undo();
+
+        juce::AudioBuffer<float> b (2, 48000);
+        for (int i = 0; i < 48000; ++i) { const float x = (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * i / sr); b.setSample (0, i, x); b.setSample (1, i, x); }
+        auto up = stretch::pitchShift (b, 12.0, sr);
+        const int zc = zeroCrossings (up, 4800, 9600);
+        check (up.getNumSamples() == 48000 && std::abs (zc - 176) < 8, "pitch shift +12 keeps length, doubles pitch (" + juce::String (zc) + ")");
+    }
+
+    std::cout << "Slicing" << std::endl;
+    {
+        e.loadSampleToPad (loop, 0, 10);
+        {
+            const juce::ScopedLock sl (e.getLock());
+            e.session().banks[0].pads[10].layers[0].p.sampleBpm = 120.0f;
+        }
+        auto split = e.autoSlice (0, 10, 0, 0, 0, 4, 0.5f);
+        check (split.size() == 4, "split into 4");
+        auto grid = e.autoSlice (0, 10, 0, 0, 1, 2, 0.5f);
+        check (grid.size() == 4, "grid 1/4 on a 4-beat loop gives 4 slices (" + juce::String ((int) grid.size()) + ")");
+        auto trans = e.autoSlice (0, 10, 0, 0, 2, 0, 0.6f);
+        check (trans.size() == 4, "transients found on each beat (" + juce::String ((int) trans.size()) + ")");
+        juce::String err;
+        const int patsBefore = (int) e.session().banks[1].patterns.size();
+        check (e.applySlices (0, 10, 0, 0, split, Engine::SliceTarget::pads, 1, 0, 1, true, 2.0f, 5.0f, err), "slice to pads " + err);
+        int withSound = 0;
+        for (int p = 0; p < 4; ++p) if (e.session().banks[1].pads[(size_t) p].hasSound()) ++withSound;
+        check (withSound == 4 && e.session().banks[1].pads[1].choke == 1, "4 pads filled in bank B1 with choke group");
+        check ((int) e.session().banks[1].patterns.size() == patsBefore + 1 && e.session().banks[1].patterns.back().notes.size() == 4, "slice pattern created");
+        check (e.applySlices (0, 10, 0, 0, split, Engine::SliceTarget::singleLayer, 0, 48, 0, false, 0.0f, 0.0f, err), "slice to single layer");
+        check (e.session().banks[0].pads[10].layers[0].zones.size() == 4 && e.session().banks[0].pads[10].keysMode, "4 zones over keys");
+    }
+
+    std::cout << "Disk streaming and live stretch" << std::endl;
+    {
+        auto s = e.loadSample (sine, true);
+        check (s && s->isStreamed(), "WAV memory-mapped for streaming");
+        e.setPadSample (0, 20, s);
+        e.padDown (0, 20, 1.0f);
+        auto out = render (e, 0.2);
+        check (out.getMagnitude (0, out.getNumSamples()) > 0.3f, "streamed pad plays");
+        render (e, 1.0);
+        e.loadSampleToPad (loop, 0, 21);
+        {
+            const juce::ScopedLock sl (e.getLock());
+            auto& l = e.session().banks[0].pads[21].layers[0];
+            l.p.liveStretch = true;
+            l.p.sampleBpm = 120.0f;
+        }
+        e.setBpm (60.0);
+        pumpMessages (1500);
+        auto zs = e.session().banks[0].pads[21].layers[0].zones[0].sample;
+        check (zs->stretched != nullptr && std::abs (zs->stretched->getNumSamples() - 2 * zs->numFrames) < 50, "live stretch built at half tempo");
+        e.setBpm (120.0);
+    }
+
+    std::cout << "Pads: copy, paste, clear, undo" << std::endl;
+    {
+        e.copyPad (0, 0);
+        e.pastePad (0, 30);
+        check (e.session().banks[0].pads[30].hasSound(), "paste pad");
+        e.clearPad (0, 30);
+        check (! e.session().banks[0].pads[30].hasSound(), "clear pad");
+        e.undo();
+        check (e.session().banks[0].pads[30].hasSound(), "undo clear");
+        e.redo();
+        check (! e.session().banks[0].pads[30].hasSound(), "redo clear");
+    }
+
+    std::cout << "Files" << std::endl;
+    {
+        juce::String err;
+        {
+            const juce::ScopedLock sl (e.getLock());
+            e.session().banks[0].name = "Drums";
+        }
+        e.findOrCreateLane ("pad/0/0/pan", true, 0)->points = { { 0, 0.2f }, { 96, 0.8f } };
+        auto sessFile = tempDir().getChildFile ("Test.crsession");
+        check (e.saveSession (sessFile, err), "save session " + err);
+        const int pats = (int) e.session().banks[0].patterns.size();
+        const int scenes = (int) e.session().scenes.size();
+        e.newSession();
+        check (! e.session().banks[0].pads[0].hasSound(), "new session is empty");
+        check (e.loadSession (sessFile, err), "load session " + err);
+        check (e.session().banks[0].name == "Drums" && e.session().banks[0].pads[0].hasSound(), "bank and samples restored");
+        check ((int) e.session().banks[0].patterns.size() == pats && (int) e.session().scenes.size() == scenes, "patterns and scenes restored");
+        check (e.session().macros[0].bindings.size() == 1 && e.session().songAutomation.size() == 1, "macros and automation restored");
+        check (e.session().banks[1].pads[2].hasSound(), "sliced pads restored");
+
+        auto bankFile = tempDir().getChildFile ("Kit.crbank");
+        check (e.saveBankPreset (0, bankFile, err), "save bank preset");
+        check (e.loadBankPreset (5, bankFile, err), "load bank preset into F1 " + err);
+        check (e.session().banks[5].pads[0].hasSound() && e.session().banks[5].name == "Drums", "bank preset contents");
+
+        auto mid = tempDir().getChildFile ("p.mid");
+        check (e.exportPatternMidi (0, 0, mid, err), "export MIDI");
+        const int n0 = (int) e.session().banks[0].patterns[0].notes.size();
+        check (e.importMidi (mid, 2, err), "import MIDI");
+        check ((int) e.session().banks[2].patterns.back().notes.size() == n0, "MIDI round trip keeps notes");
+
+        auto pack = tempDir().getChildFile ("Test.crpack");
+        check (e.exportPack (pack, "Test", "Me", err), "export pack " + err);
+        check (e.installPack (pack, err), "install pack " + err);
+    }
+
+    std::cout << "Export audio" << std::endl;
+    {
+        juce::String err;
+        auto wav = tempDir().getChildFile ("mix.wav");
+        ExportOptions o;
+        o.startTick = 0;
+        o.endTick = cr::barTicks();
+        o.includeTail = false;
+        o.bitDepth = 16;
+        {
+            const juce::ScopedLock sl (e.getLock());
+            e.session().song = { { 0, 0, 0, cr::barTicks() } };
+        }
+        e.playSong();
+        check (e.exportAudio (wav, o, err), "export " + err);
+        std::unique_ptr<juce::AudioFormatReader> r (e.formatManager.createReaderFor (wav));
+        check (r != nullptr && std::abs ((double) r->lengthInSamples - 2.0 * sr) < 600, "export length is one bar");
+        if (r)
+        {
+            juce::AudioBuffer<float> b (2, (int) r->lengthInSamples);
+            r->read (&b, 0, b.getNumSamples(), 0, true, true);
+            check (b.getMagnitude (0, b.getNumSamples()) > 0.05f, "export has audio");
+        }
+        o.stems = true;
+        check (e.exportAudio (tempDir().getChildFile ("stems.wav"), o, err), "export stems");
+        check (tempDir().getChildFile ("stems - Drums.wav").existsAsFile(), "stem file per track");
+    }
+
+    std::cout << std::endl << (checks - failures) << " / " << checks << " checks passed" << std::endl;
+    tempDir().deleteRecursively();
+    return failures == 0 ? 0 : 1;
+}
