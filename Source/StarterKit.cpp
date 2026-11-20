@@ -152,6 +152,13 @@ void loadStarterKit()
             l.p.release = p == 0 ? 0.4f : 0.08f;
         }
     }
+    {
+        const juce::ScopedLock sl (e.getLock());
+        e.session().song.push_back ({ 0, 0, 0, 4 * cr::barTicks() });
+    }
+    e.launchPattern (0, 0);
+    e.captureScene (0);
+    e.playSong (-1);
     e.selectedBank = 0;
     e.selectedPad = 0;
 }

@@ -738,10 +738,6 @@ public:
         {
             drawCaps (g, "Fixed vel", velCaption, juce::Justification::centred, Pal::textFaint, 9.5f);
             drawCaps (g, "Repeat swing", swingCaption, juce::Justification::centred, Pal::textFaint, 9.5f);
-            g.setColour (Pal::text);
-            g.setFont (Fonts::digits (13.0f));
-            g.drawText (juce::String ((int) velSlider.getValue()), velSlider.getBounds().withHeight (24), juce::Justification::centred);
-            g.drawText (juce::String ((int) swingSlider.getValue()) + "%", swingSlider.getBounds().withHeight (24), juce::Justification::centred);
         }
         else if (tab == 2)
         {
@@ -793,6 +789,15 @@ public:
         }
         if (e.padMode.load() == 2 || e.padMode.load() == 3)
             drawCaps (g, e.padMode.load() == 2 ? "Tap pads to mute / unmute" : "Tap pads to solo / unsolo", hintArea, juce::Justification::centredLeft, Pal::textDim, 10.5f);
+    }
+
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        if (leftTabs.getSelected() != 0) return;
+        g.setColour (Pal::text);
+        g.setFont (Fonts::digits (15.0f));
+        g.drawText (juce::String ((int) velSlider.getValue()), velSlider.getBounds().withHeight (30), juce::Justification::centred);
+        g.drawText (juce::String ((int) swingSlider.getValue()) + "%", swingSlider.getBounds().withHeight (30), juce::Justification::centred);
     }
 
     void resized() override

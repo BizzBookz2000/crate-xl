@@ -500,7 +500,7 @@ public:
                 info << "SELECTION  " << juce::String (wave.selStart * len, 3) << " s  -  " << juce::String (wave.selEnd * len, 3)
                      << " s   (" << juce::String ((wave.selEnd - wave.selStart) * len, 3) << " s)";
             else info << "LENGTH  " << juce::String (len, 3) << " s   " << juce::String ((int) s->sampleRate) << " Hz";
-            drawCaps (g, info, getLocalBounds().removeFromBottom (60).reduced (16, 0).removeFromRight (420), juce::Justification::centredRight, Pal::textDim, 10.0f);
+            drawCaps (g, info, getLocalBounds().removeFromTop (54).withTrimmedLeft (760).withTrimmedRight (440), juce::Justification::centredLeft, Pal::textDim, 10.0f);
         }
     }
 

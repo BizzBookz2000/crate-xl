@@ -491,10 +491,11 @@ public:
             {
                 auto* z = wave.getZone();
                 const double d = s->lengthSeconds() * (z ? (z->end - z->start) : 1.0f);
-                drawCaps (g, "Duration", durationArea.removeFromTop (14).translated (0, 0), juce::Justification::centred, Pal::textFaint, 9.5f);
+                auto da = durationArea;
+                drawCaps (g, "Duration", da.removeFromTop (14), juce::Justification::centred, Pal::textFaint, 9.5f);
                 g.setColour (accentColour());
                 g.setFont (Fonts::ui (12.5f, true));
-                g.drawText (juce::String (d, 2) + " s", durationArea.withTrimmedTop (14), juce::Justification::centred);
+                g.drawText (juce::String (d, 2) + " s", da, juce::Justification::centred);
                 juce::ignoreUnused (l);
             }
         auto envBox = drawSection (g, envArea, "Amplitude envelope");
@@ -1222,18 +1223,20 @@ public:
     {
         auto r = getLocalBounds().reduced (14, 12);
         auto fields = r.removeFromTop (54);
-        const int w = fields.getWidth() / 10;
+        const int w = fields.getWidth() / 9;
         for (auto* c : std::initializer_list<juce::Component*> { &rootStep, &lowKeyStep, &highKeyStep, &lowVelStep, &highVelStep })
             c->setBounds (fields.removeFromLeft (w).reduced (4, 6));
         learnBtn.setBounds (fields.removeFromLeft (w).reduced (4, 14));
         pitchField.setBounds (fields.removeFromLeft (w).reduced (4, 6));
         zoneTune.setBounds (fields.removeFromLeft (w).withHeight (66));
         zoneGain.setBounds (fields.removeFromLeft (w).withHeight (66));
-        auto b = fields.reduced (4, 12);
-        spreadBtn.setBounds (b.removeFromTop (b.getHeight() / 2).reduced (0, 1));
-        fullBtn.setBounds (b.reduced (0, 1));
-        r.removeFromTop (20);
-        hint = r.removeFromTop (16);
+        r.removeFromTop (16);
+        auto btnRow = r.removeFromTop (30);
+        fullBtn.setBounds (btnRow.removeFromRight (110));
+        btnRow.removeFromRight (6);
+        spreadBtn.setBounds (btnRow.removeFromRight (110));
+        r.removeFromTop (6);
+        hint = btnRow;
         r.removeFromTop (4);
         map.setBounds (r);
     }
@@ -1507,7 +1510,7 @@ public:
         g.setColour (Pal::text);
         g.setFont (Fonts::ui (14.0f, true));
         g.drawFittedText (currentBank().name, hdr.withTrimmedRight (30), juce::Justification::centredLeft, 1);
-        drawCaps (g, "Pads " + juce::String (miniPads.page * 16 + 1) + "-" + juce::String (miniPads.page * 16 + 16), padPageLabel, juce::Justification::centred, Pal::textFaint, 9.0f);
+        drawCaps (g, juce::String (miniPads.page + 1) + "/8", padPageLabel, juce::Justification::centred, Pal::textFaint, 9.0f);
 
         auto ph = padHeader;
         auto badge = ph.removeFromLeft (30).withSizeKeepingCentre (30, 30).toFloat();
