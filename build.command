@@ -32,16 +32,18 @@ cmake -S . -B build $GEN -DCMAKE_BUILD_TYPE=Release
 echo "=== Building Release ==="
 cmake --build build --config Release --parallel
 
-APP=$(find build/Crate_artefacts -maxdepth 3 -name "Crate.app" | head -n 1)
-if [ -z "$APP" ]; then echo "[ERROR] Crate.app not found after build."; read -n 1 -s -r -p "Press any key..."; exit 1; fi
+APP=$(find build/Crate_artefacts -maxdepth 3 -name "*.app" | head -n 1)
+if [ -z "$APP" ]; then echo "[ERROR] The app was not found after the build."; read -n 1 -s -r -p "Press any key..."; exit 1; fi
 mkdir -p dist
-rm -rf dist/Crate.app
+NAME=$(basename "$APP")
+rm -rf "dist/$NAME"
 cp -R "$APP" dist/
 # Ad-hoc sign so Gatekeeper lets a locally built app run
-codesign --force --deep -s - dist/Crate.app >/dev/null 2>&1 || true
+codesign --force --deep -s - "dist/$NAME" >/dev/null 2>&1 || true
+xattr -dr com.apple.quarantine "dist/$NAME" 2>/dev/null || true
 
 echo ""
 echo "=== Done ==="
-echo "The app is at: $(pwd)/dist/Crate.app"
+echo "The app is at: $(pwd)/dist/$NAME"
 open dist 2>/dev/null || true
 read -n 1 -s -r -p "Press any key to close..."

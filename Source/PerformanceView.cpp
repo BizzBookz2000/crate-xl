@@ -1199,6 +1199,7 @@ private:
 
     void timerCallback() override
     {
+        if (! isShowing()) return;
         auto& e = Engine::get();
         const int b = e.selectedBank;
         for (auto* p : pads)

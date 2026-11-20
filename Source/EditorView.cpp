@@ -1675,6 +1675,7 @@ private:
 
     void timerCallback() override
     {
+        if (! isShowing()) return;
         auto& e = Engine::get();
         bool any = false;
         const int b = selBank();
