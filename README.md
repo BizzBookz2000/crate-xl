@@ -26,7 +26,7 @@ For ASIO drivers, set `ASIO_SDK=C:\path\to\asiosdk` before running the script. T
 2. Install **CMake**: `brew install cmake`, or download it from cmake.org.
 3. Double-click **`build.command`**. If macOS won't open it, right-click it and choose **Open**.
 
-You get a universal app (Apple Silicon + Intel) in `dist/`, ad-hoc signed so it runs on the Mac that built it.
+You get a universal app (Apple Silicon + Intel) in `dist/` that runs on macOS 10.13 or newer. It is ad-hoc signed, so the first time you open it, right-click it and choose Open.
 
 ### Android: `build-android.bat` (Windows) or `build-android.sh` (Mac / Linux)
 

@@ -3,7 +3,11 @@ cmake_minimum_required(VERSION 3.22)
 # The app's name is set here (and nowhere else in the build).
 set(CRATE_PRODUCT_NAME "Crate XL" CACHE STRING "Application name")
 
-project(Crate VERSION 1.3.1 LANGUAGES C CXX)
+# Oldest macOS the Mac app runs on. This has to be set before project(), or the build
+# targets whichever macOS version the building computer has.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
+
+project(Crate VERSION 1.3.2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,7 +17,6 @@ if(APPLE)
     if(NOT CMAKE_OSX_ARCHITECTURES)
         set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal binary")
     endif()
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 endif()
 
 if(MSVC)
