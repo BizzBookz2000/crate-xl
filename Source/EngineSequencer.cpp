@@ -69,6 +69,13 @@ void Engine::collectSequencerEvents (int n)
     }
 }
 
+// Extends a pattern by whole bars so it reaches 'relTick' (capped at 64 bars).
+void Engine::growPatternTo (cr::Pattern& pat, double relTick)
+{
+    const int bar = cr::barTicks();
+    while (pat.length < relTick && pat.length < 64 * bar) pat.length += bar;
+}
+
 // offsetBase is unused: offsets are derived from the segment table
 void Engine::collectRange (double from, double to, double)
 {
@@ -80,7 +87,17 @@ void Engine::collectRange (double from, double to, double)
         if (bank.source == cr::TrackSource::pattern)
         {
             if (! juce::isPositiveAndBelow (bank.playingPattern, (int) bank.patterns.size())) continue;
-            collectPatternNotes (b, bank.patterns[(size_t) bank.playingPattern], patternOrigin[(size_t) b], from, to, -1.0e18, 1.0e18, 0);
+            auto& pat = bank.patterns[(size_t) bank.playingPattern];
+            const double origin = patternOrigin[(size_t) b];
+            if (sess.loopOn)
+                collectPatternNotes (b, pat, origin, from, to, -1.0e18, 1.0e18, 0);      // Loop on: the pattern repeats
+            else
+            {
+                // Loop off: one pass. While recording into it, the pattern grows instead of repeating.
+                if (recording && b == selectedBank && bank.recordArm && bank.playingPattern == bank.workingPattern)
+                    growPatternTo (pat, to - origin);
+                collectPatternNotes (b, pat, origin, from, to, origin, origin + pat.lengthTicks(), 0);
+            }
         }
         else if (bank.source == cr::TrackSource::song)
         {
@@ -167,6 +184,8 @@ void Engine::handleLiveEvent (const LiveEvent& le, int offset, double tick)
     if (bank.source != cr::TrackSource::pattern || bank.playingPattern != bank.workingPattern) return;
     if (! juce::isPositiveAndBelow (bank.workingPattern, (int) bank.patterns.size())) return;
     auto& pat = bank.patterns[(size_t) bank.workingPattern];
+    // Loop off: the recording runs on, so the pattern grows a bar at a time to keep up.
+    if (! sess.loopOn) growPatternTo (pat, tick - patternOrigin[(size_t) b]);
     const double L = pat.lengthTicks();
     if (L <= 0) return;
     const double pos = std::fmod (juce::jmax (0.0, tick - patternOrigin[(size_t) b]), L);

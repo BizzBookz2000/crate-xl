@@ -592,6 +592,7 @@ double Engine::getTrackPatternPosition (int b) const
         if (! juce::isPositiveAndBelow (bank.playingPattern, (int) bank.patterns.size())) return -1.0;
         const double len = bank.patterns[(size_t) bank.playingPattern].lengthTicks();
         const double rel = tick - patternOrigin[(size_t) b];
+        if (! sess.loopOn && rel >= len) return -1.0;   // loop off: the pattern has played through
         return len > 0 ? std::fmod (juce::jmax (0.0, rel), len) : 0.0;
     }
     if (bank.source == cr::TrackSource::song)

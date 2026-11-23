@@ -99,6 +99,7 @@ You can also pass `-DCRATE_PRODUCT_NAME="My Name"` when configuring. The build s
 
 - **Song**: arranger with bank tracks and audio tracks, plus loop markers in the ruler. Draw, move, resize, split, duplicate and repeat clips. Drag the pattern chip onto the timeline. Each track can follow the song or play its own pattern. There are track automation lanes, and you can drop audio files onto the timeline.
 - **Scenes**: a pattern grid per track; launches quantised to 1 beat, or 1/2/4/8 bars. Capture, duplicate, rename, reorder, and paste a scene to the end of the song.
+- **Loop button**: with Loop on, playback repeats between the loop markers, and a pattern playing on its own repeats. With Loop off, nothing repeats. A pattern plays once, and recording keeps running forward, so the pattern grows a bar at a time as you play past its end.
 - **Recording puts the pattern in place**: when you stop, what you recorded appears on the bank's song track, at the spot where you recorded it and as long as it played (in whole loops). It also goes into the scene grid (the last scene you launched, or the next free one). The pattern chip at the bottom still works for dragging copies anywhere. Turning Record off while playing keeps the loop going, so you can keep overdubbing.
 - **Pattern**: piano roll for pads and for keys-mode pads (128 keys). Tools: select, draw and paint. Quantize with swing, a velocity lane, copy/paste, double the pattern, and pattern automation lanes.
 

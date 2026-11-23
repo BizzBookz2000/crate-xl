@@ -589,6 +589,41 @@ int main (int argc, char** argv)
         for (auto& t : e.session().audioTracks) t.strip.mute = false;
     }
 
+    std::cout << "Loop button" << std::endl;
+    {
+        // a one-bar pattern with one hit, played in pattern mode for three bars
+        {
+            const juce::ScopedLock sl (e.getLock());
+            auto& b = e.session().banks[0];
+            b.patterns.assign (1, cr::Pattern());
+            b.patterns[0].length = cr::barTicks();
+            cr::Note n; n.pad = 0; n.start = 0; n.length = cr::ppq / 2; n.velocity = 1.0f;
+            b.patterns[0].notes.push_back (n);
+            b.strip.mute = false;
+        }
+        auto hitsOver3Bars = [&e] (bool loop)
+        {
+            e.stop();
+            e.session().loopOn = loop;
+            e.session().loopStart = 0; e.session().loopEnd = 4 * cr::barTicks();
+            e.setPosition (0.0);
+            e.launchPattern (0, 0);
+            e.play();
+            auto out = render (e, 3.0 * 60.0 / e.session().bpm * 4.0 + 0.05);
+            e.stop();
+            // sound at the start of each bar (first 1/16th, before any tail could matter much)
+            const int barLen = (int) (60.0 / e.session().bpm * 4.0 * sr);
+            int hits = 0;
+            for (int k = 0; k < 3; ++k)
+                if (out.getRMSLevel (0, k * barLen, barLen / 16) > 0.01f) ++hits;
+            return hits;
+        };
+        const int off = hitsOver3Bars (false), on = hitsOver3Bars (true);
+        check (off == 1, "Loop off: the pattern plays once (" + juce::String (off) + " hits)");
+        check (on == 3, "Loop on: the pattern repeats (" + juce::String (on) + " hits)");
+        e.session().loopOn = false;
+    }
+
     std::cout << "Resampling" << std::endl;
     {
         // a bank that plays: pad 1 of bank 0, a note every beat for one bar

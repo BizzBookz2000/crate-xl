@@ -1,12 +1,4 @@
 #include <JuceHeader.h>
-
-// The CMake build defines these; the Android (Projucer) build takes them from ProjectInfo.
-#ifndef JUCE_APPLICATION_NAME_STRING
- #define JUCE_APPLICATION_NAME_STRING ProjectInfo::projectName
-#endif
-#ifndef JUCE_APPLICATION_VERSION_STRING
- #define JUCE_APPLICATION_VERSION_STRING ProjectInfo::versionString
-#endif
 #include <set>
 #include "Engine.h"
 #include "MainComponent.h"

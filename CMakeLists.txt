@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # The app's name is set here (and nowhere else in the build).
 set(CRATE_PRODUCT_NAME "Crate XL" CACHE STRING "Application name")
 
-project(Crate VERSION 1.3.0 LANGUAGES C CXX)
+project(Crate VERSION 1.3.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -2,9 +2,6 @@
 #include "Engine.h"
 #include "FileUtils.h"
 
-#ifndef JUCE_APPLICATION_VERSION_STRING
- #define JUCE_APPLICATION_VERSION_STRING "1.2"
-#endif
 
 using juce::var;
 

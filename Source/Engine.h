@@ -1,5 +1,19 @@
 #pragma once
 #include <JuceHeader.h>
+
+// The CMake build defines the app name and version; the Android (Projucer) build doesn't.
+#ifndef JUCE_APPLICATION_NAME_STRING
+ #define JUCE_APPLICATION_NAME_STRING "Crate XL"
+#endif
+#ifndef JUCE_APPLICATION_VERSION_STRING
+ #if defined (JUCE_APP_VERSION)
+  #define CR_STRINGIFY2(x) #x
+  #define CR_STRINGIFY(x) CR_STRINGIFY2(x)
+  #define JUCE_APPLICATION_VERSION_STRING CR_STRINGIFY (JUCE_APP_VERSION)
+ #else
+  #define JUCE_APPLICATION_VERSION_STRING "dev"
+ #endif
+#endif
 #include "Model.h"
 #include "DspUtils.h"
 #include "PluginManager.h"
@@ -505,7 +519,8 @@ private:
     double position = 0.0, playStartPosition = 0.0, recordStartTick = 0.0;
     std::array<bool, cr::numBanks> recordedInto {};   // banks that got notes during the current recording
     int lastLaunchedScene = 0;
-    void commitRecordedPatterns (double endTick, bool backToSong);     // lock held: put what was recorded into the song and scenes
+    void commitRecordedPatterns (double endTick, bool backToSong);
+    void growPatternTo (cr::Pattern& pat, double relTick);     // lock held: put what was recorded into the song and scenes
     std::array<double, cr::numBanks> patternOrigin {};
     std::atomic<double> uiPosition { 0.0 };
     std::vector<double> tapTimes;
