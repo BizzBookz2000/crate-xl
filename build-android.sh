@@ -42,7 +42,7 @@ fi
 cd Builds/Android
 echo "sdk.dir=$ANDROID_HOME" > local.properties
 chmod +x gradlew
-./gradlew assembleDebug
+./gradlew assembleRelease_Release
 
 mkdir -p ../../dist
 cp "$(find app/build/outputs/apk -name '*.apk' | head -n 1)" "../../dist/Crate XL.apk"

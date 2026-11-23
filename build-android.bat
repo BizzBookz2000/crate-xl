@@ -29,7 +29,7 @@ if not exist "%USERPROFILE%\.android\debug.keystore" (
 cd Builds\Android
 set "SDKDIR=%ANDROID_HOME:\=\\%"
 > local.properties echo sdk.dir=%SDKDIR%
-call gradlew.bat assembleDebug || goto :fail
+call gradlew.bat assembleRelease_Release || goto :fail
 
 if not exist "..\..\dist" mkdir "..\..\dist"
 for /r app\build\outputs\apk %%f in (*.apk) do copy /y "%%f" "..\..\dist\Crate XL.apk" >nul
