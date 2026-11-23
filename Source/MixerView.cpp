@@ -1,5 +1,6 @@
 // Mixer view: main, bank, pad, audio and AUX channel strips; unlimited inserts; sends; I/O.
 #include "Views.h"
+#include "ChannelEqView.h"
 
 namespace
 {
@@ -74,20 +75,28 @@ public:
             g.setColour (Pal::outline);
             g.fillRect (meters.getX(), y, meters.getWidth() + fader.getWidth() + 4.0f, 1.0f);
         }
-        // meters
+        // clip light (stays lit until clicked)
+        clipArea = juce::Rectangle<float> (meters.getX() - 1.0f, 0.0f, meters.getWidth() + 2.0f, 5.0f);
+        g.setColour (st->clipped.load() ? Pal::rec : Pal::surface);
+        g.fillRoundedRectangle (clipArea, 1.5f);
+        // meters: peak (translucent) with RMS (solid) inside
         const float ml = st->meterL.load(), mr = st->meterR.load();
+        const float rl = st->rmsL.load(), rr = st->rmsR.load();
         const float w = (meters.getWidth() - 2.0f) / 2.0f;
         for (int c = 0; c < 2; ++c)
         {
             auto bar = juce::Rectangle<float> (meters.getX() + c * (w + 2.0f), meters.getY(), w, meters.getHeight());
             g.setColour (Pal::bg);
             g.fillRect (bar);
-            const float lv = gainToPos (c == 0 ? ml : mr);
-            auto lit = bar.withTop (bar.getBottom() - lv * bar.getHeight());
             juce::ColourGradient grad (Pal::play, bar.getX(), bar.getBottom(), Pal::rec, bar.getX(), bar.getY(), false);
             grad.addColour (0.82, Pal::solo);
             g.setGradientFill (grad);
-            g.fillRect (lit);
+            const float lv = gainToPos (c == 0 ? ml : mr);
+            g.setOpacity (0.45f);
+            g.fillRect (bar.withTop (bar.getBottom() - lv * bar.getHeight()));
+            g.setOpacity (1.0f);
+            const float rv = gainToPos (c == 0 ? rl : rr);
+            g.fillRect (bar.withTop (bar.getBottom() - rv * bar.getHeight()));
         }
         // fader
         const float pos = gainToPos (st->volume);
@@ -107,6 +116,7 @@ public:
         auto* st = Engine::get().getStrip (key);
         if (st == nullptr) return;
         if (e.mods.isPopupMenu()) { showMenu(); return; }
+        if (e.position.y < 10.0f && e.position.x < 40.0f) { st->clipped = false; st->peakHold = 0.0f; repaint(); return; }
         startPos = gainToPos (st->volume);
     }
 
@@ -156,6 +166,7 @@ private:
         });
     }
     float startPos = 0.0f;
+    juce::Rectangle<float> clipArea;
 };
 
 // ============================================================================
@@ -204,6 +215,40 @@ public:
         inputGain.setCompact (true);
         gateKnob.setCompact (true);
         fader.onChange = [this] { repaint(); };
+        addAndMakeVisible (eqThumb);
+        eqThumb.onClick = [this] { if (onEqClick) onEqClick (key); };
+        for (auto* k : { &trimKnob, &widthKnob }) { k->setCompact (true); addAndMakeVisible (k); }
+        phaseBtn.setClickingTogglesState (true);
+        phaseBtn.setColour (juce::TextButton::buttonOnColourId, Pal::info);
+        phaseBtn.setTooltip ("Phase invert");
+        phaseBtn.onClick = [this] { if (auto* st = Engine::get().getStrip (key)) st->eq.invert = phaseBtn.getToggleState(); };
+        addAndMakeVisible (phaseBtn);
+        for (int i = 0; i < cr::numAux; ++i)
+        {
+            auto* b = preBtns.add (new juce::TextButton ("POST"));
+            b->setTooltip ("Send taken before or after the fader");
+            b->onClick = [this, i]
+            {
+                if (auto* st = Engine::get().getStrip (key)) st->sendPre[i] = ! st->sendPre[i];
+                updatePreButtons();
+            };
+            addChildComponent (b);
+        }
+    }
+
+    std::function<void (int)> onEqClick;
+
+    void updatePreButtons()
+    {
+        auto* st = Engine::get().getStrip (key);
+        for (int i = 0; i < cr::numAux; ++i)
+        {
+            auto* b = preBtns[i];
+            b->setVisible (sends[i]->isVisible());
+            if (st == nullptr) continue;
+            b->setButtonText (st->sendPre[i] ? "PRE" : "POST");
+            b->setColour (juce::TextButton::buttonColourId, st->sendPre[i] ? Pal::info.withAlpha (0.35f) : Pal::surface);
+        }
     }
 
     void setKey (int k, bool sel, bool allSends, bool io)
@@ -225,6 +270,22 @@ public:
             if (show) { sends[i]->setAccent (col); sends[i]->setParam (stripPath (key) + "send" + juce::String (i), e.session().aux[(size_t) i].name); }
         }
         if (st) { muteBtn.setToggleState (st->mute, juce::dontSendNotification); soloBtn.setToggleState (st->solo, juce::dontSendNotification); }
+        eqThumb.key = key;
+        eqThumb.repaint();
+        trimKnob.setAccent (col);
+        trimKnob.setParam (stripPath (key) + "trim", "Trim");
+        widthKnob.setAccent (col);
+        widthKnob.setParam (stripPath (key) + "width", "Width");
+        if (st) phaseBtn.setToggleState (st->eq.invert, juce::dontSendNotification);
+        {
+            // width is for stereo channels: hide it on audio tracks recording a mono input
+            const bool monoTrack = key >= 1000 && key < 2000 && e.session().audioTracks[(size_t) (key - 1000)].inputMono
+                                   && e.session().audioTracks[(size_t) (key - 1000)].inputSource == 0;
+            widthKnob.setVisible (! monoTrack && ! ioMode);
+        }
+        trimKnob.setVisible (! ioMode);
+        phaseBtn.setVisible (! ioMode);
+        eqThumb.setVisible (! ioMode);
         soloBtn.setVisible (key != 3000);
         const bool audio = key >= 1000 && key < 2000;
         armBtn.setVisible (audio);
@@ -246,6 +307,7 @@ public:
         gateKnob.setVisible (ioMode && audio);
         outputField.setVisible (ioMode);
         inputField.accent = outputField.accent = col;
+        updatePreButtons();
         resized();
         repaint();
     }
@@ -294,6 +356,14 @@ public:
     {
         auto r = getLocalBounds().reduced (4, 0);
         r.removeFromTop (64);
+        if (! ioMode)
+        {
+            eqThumb.setBounds (r.removeFromTop (34));
+            r.removeFromTop (2);
+            auto row = r.removeFromTop (52);
+            trimKnob.setBounds (row.removeFromLeft (row.getWidth() / 2));
+            widthKnob.setBounds (row);
+        }
         auto bottom = r.removeFromBottom (28);
         muteBtn.setBounds (bottom.removeFromLeft (bottom.getWidth() / 2).reduced (1, 2));
         soloBtn.setBounds (bottom.reduced (1, 2));
@@ -315,10 +385,23 @@ public:
         }
         else
         {
-            for (int i = cr::numAux - 1; i >= 0; --i)
-                if (sends[i]->isVisible()) sends[i]->setBounds (r.removeFromBottom (58));
+            // sends two per row, each with its pre / post switch
+            int visible = 0;
+            for (int i = 0; i < cr::numAux; ++i) if (sends[i]->isVisible()) ++visible;
+            const int rows = (visible + 1) / 2;
+            auto area = r.removeFromBottom (rows * 64);
+            for (int i = 0, n = 0; i < cr::numAux; ++i)
+            {
+                if (! sends[i]->isVisible()) continue;
+                auto cell = juce::Rectangle<int> (area.getX() + (n % 2) * (area.getWidth() / 2), area.getY() + (n / 2) * 64, area.getWidth() / 2, 64);
+                preBtns[i]->setBounds (cell.removeFromBottom (14).reduced (4, 0));
+                sends[i]->setBounds (cell);
+                ++n;
+            }
         }
-        pan.setBounds (r.removeFromBottom (58));
+        auto panRow = r.removeFromBottom (48);
+        phaseBtn.setBounds (panRow.removeFromRight (24).withSizeKeepingCentre (22, 20));
+        pan.setBounds (panRow);
         r.removeFromBottom (4);
         fader.setBounds (r);
     }
@@ -333,6 +416,7 @@ public:
     }
 
     void refreshMeters() { fader.repaint(); repaint (0, 36, getWidth(), 28); }
+    void refreshEq() { eqThumb.repaint(); }
 
 private:
     juce::String inputText() const
@@ -343,7 +427,8 @@ private:
         if (tr.inputSource == 0) { auto pairs = e.getInputPairNames(); return tr.inputMono ? "In " + juce::String (tr.inputPair + 1) : pairs[tr.inputPair]; }
         if (tr.inputSource == 1) return "Main out";
         if (tr.inputSource >= 2 && tr.inputSource < 2 + cr::numBanks) return e.session().banks[(size_t) (tr.inputSource - 2)].name;
-        return e.session().aux[(size_t) (tr.inputSource - 200)].name;
+        if (tr.inputSource >= 200 && tr.inputSource < 200 + cr::numAux) return e.session().aux[(size_t) (tr.inputSource - 200)].name;
+        return liveSourceName (tr.inputSource);
     }
 
     void inputMenu()
@@ -359,12 +444,14 @@ private:
         internal.addItem (300, "Main out (resample)", true, tr.inputSource == 1);
         for (int b = 0; b < cr::numBanks; ++b) if (e.session().banks[(size_t) b].created) internal.addItem (400 + b, e.session().banks[(size_t) b].name, true, tr.inputSource == 2 + b);
         for (int a = 0; a < e.session().auxCount; ++a) internal.addItem (600 + a, e.session().aux[(size_t) a].name, true, tr.inputSource == 200 + a);
+        addLiveSourceItems (internal, tr.inputSource, key - 1000);
         m.addSubMenu ("Stereo inputs", hw);
         m.addSubMenu ("Mono inputs", mono);
-        m.addSubMenu ("Internal", internal);
+        m.addSubMenu ("Internal (resample)", internal);
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&inputField), [this] (int r)
         {
             auto& t = Engine::get().session().audioTracks[(size_t) (key - 1000)];
+            if (const int live = liveSourceForMenuResult (r); live >= 0) { t.inputSource = live; inputField.repaint(); return; }
             if (r >= 600) t.inputSource = 200 + (r - 600);
             else if (r >= 400) t.inputSource = 2 + (r - 400);
             else if (r == 300) t.inputSource = 1;
@@ -397,6 +484,20 @@ private:
     void renameMenu()
     {
         if (key == 3000) return;
+        juce::PopupMenu m;
+        m.addItem (1, "Rename...");
+        addResampleItems (m, key);
+        if (auto* st = Engine::get().getStrip (key)) m.addItem (2, "Reset clip light and peak", st->clipped.load() || st->peakHold.load() > 0.0f);
+        m.showMenuAsync (juce::PopupMenu::Options(), [this] (int r)
+        {
+            if (r == 1) askRename();
+            else if (r == 2) { if (auto* st = Engine::get().getStrip (key)) { st->clipped = false; st->peakHold = 0.0f; } }
+            else handleResampleItem (r, key);
+        });
+    }
+
+    void askRename()
+    {
         askForText ("Name", stripName (key), [k = key] (const juce::String& n)
         {
             auto& s = Engine::get().session();
@@ -409,6 +510,10 @@ private:
     }
 
     FaderMeter fader;
+    EqThumbnail eqThumb;
+    Knob trimKnob { "Trim" }, widthKnob { "Width" };
+    juce::TextButton phaseBtn { juce::String (juce::CharPointer_UTF8 ("\xc3\x98")) };
+    juce::OwnedArray<juce::TextButton> preBtns;
     Knob pan { "Pan" };
     juce::OwnedArray<Knob> sends;
     juce::TextButton muteBtn { "M" }, soloBtn { "S" };
@@ -441,6 +546,11 @@ public:
         for (auto* b : { &addTrackBtn, &showPadsBtn, &allSendsBtn, &ioBtn, &sendModeBtn }) addAndMakeVisible (b);
         lockBtn.setClickingTogglesState (true);
         addAndMakeVisible (lockBtn);
+        eqBtn.setClickingTogglesState (true);
+        eqBtn.onClick = [this] { showEq (eqBtn.getToggleState()); };
+        addAndMakeVisible (eqBtn);
+        addChildComponent (eqPanel);
+        eqPanel.onClose = [this] { showEq (false); };
         startTimerHz (30);
     }
 
@@ -463,7 +573,13 @@ public:
         for (int a = 0; a < e.session().auxCount; ++a) keys.push_back (2000 + a);
         if (std::find (keys.begin(), keys.end(), selectedKey) == keys.end() && ! lockBtn.getToggleState()) selectedKey = keys.size() > 1 ? keys[1] : 3000;
 
-        while (strips.size() < (int) keys.size()) { auto* s = strips.add (new StripComponent()); s->onSelect = [this] (int k) { select (k); }; content.addAndMakeVisible (s); }
+        while (strips.size() < (int) keys.size())
+        {
+            auto* s = strips.add (new StripComponent());
+            s->onSelect = [this] (int k) { select (k); };
+            s->onEqClick = [this] (int k) { select (k); showEq (true); };
+            content.addAndMakeVisible (s);
+        }
         while (strips.size() > (int) keys.size()) strips.removeLast();
         for (int i = 0; i < (int) keys.size(); ++i) strips[i]->setKey (keys[(size_t) i], keys[(size_t) i] == selectedKey, allSendsBtn.getToggleState(), ioBtn.getToggleState());
         updateChain();
@@ -504,7 +620,9 @@ public:
         showPadsBtn.setBounds (bb.removeFromLeft (110)); bb.removeFromLeft (6);
         allSendsBtn.setBounds (bb.removeFromLeft (100)); bb.removeFromLeft (6);
         sendModeBtn.setBounds (bb.removeFromLeft (130)); bb.removeFromLeft (6);
-        ioBtn.setBounds (bb.removeFromLeft (60));
+        ioBtn.setBounds (bb.removeFromLeft (60)); bb.removeFromLeft (6);
+        eqBtn.setBounds (bb.removeFromLeft (110));
+        if (eqPanel.isVisible()) eqPanel.setBounds (r.removeFromBottom (juce::jlimit (280, 360, r.getHeight() * 2 / 5)));
         fxArea = r.removeFromLeft (juce::jlimit (280, 360, getWidth() / 4));
         auto f = fxArea.reduced (12, 10);
         fxHeader = f.removeFromTop (30);
@@ -530,11 +648,20 @@ private:
         repaint();
     }
 
+    void showEq (bool on)
+    {
+        eqBtn.setToggleState (on, juce::dontSendNotification);
+        eqPanel.setVisible (on);
+        if (on) eqPanel.setKey (selectedKey, stripName (selectedKey), stripColour (selectedKey));
+        resized();
+    }
+
     void updateChain()
     {
         auto* st = Engine::get().getStrip (selectedKey);
         if (st) chain.setChain (&st->inserts, stripPath (selectedKey), stripColour (selectedKey));
         else chain.clear();
+        if (eqPanel.isVisible()) eqPanel.setKey (selectedKey, stripName (selectedKey), stripColour (selectedKey));
     }
 
     void addTrackMenu()
@@ -574,6 +701,7 @@ private:
     {
         if (! isShowing()) return;
         for (auto* s : strips) s->refreshMeters();
+        if (ticks % 6 == 0) for (auto* s : strips) s->refreshEq();
         if (++ticks % 30 == 0)
             for (int i = 0; i < (int) keys.size(); ++i)
                 if (auto* st = Engine::get().getStrip (keys[(size_t) i])) st->peakHold = st->peakHold.load() * 0.5f;
@@ -585,6 +713,8 @@ private:
     juce::OwnedArray<StripComponent> strips;
     std::vector<int> keys;
     int selectedKey = 0, ticks = 0;
+    ChannelEqPanel eqPanel;
+    juce::TextButton eqBtn { "Channel EQ" };
     juce::TextButton addTrackBtn { "+ Add track" }, showPadsBtn { "Show pads" }, allSendsBtn { "All sends" }, ioBtn { "I/O" }, sendModeBtn { "Pre / post sends" };
     IconButton lockBtn { Icon::lock, "Keep this channel's effects shown", true };
     juce::Rectangle<int> fxArea, fxHeader, bottomBar;

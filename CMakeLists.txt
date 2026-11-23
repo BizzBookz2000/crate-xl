@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # The app's name is set here (and nowhere else in the build).
 set(CRATE_PRODUCT_NAME "Crate XL" CACHE STRING "Application name")
 
-project(Crate VERSION 1.1.0 LANGUAGES C CXX)
+project(Crate VERSION 1.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -45,7 +45,13 @@ set(CRATE_ENGINE_SOURCES
     Source/EngineMidi.cpp
     Source/EngineSamples.cpp
     Source/SessionIO.cpp
+    Source/EngineImport.cpp
+    Source/EngineResample.cpp
+    Source/PlatformAudioWin.cpp
     Source/PluginManager.cpp)
+if(APPLE)
+    list(APPEND CRATE_ENGINE_SOURCES Source/PlatformAudioMac.mm)
+endif()
 
 set(CRATE_DEFINITIONS
     JUCE_PLUGINHOST_VST3=1
@@ -93,6 +99,7 @@ target_sources(Crate PRIVATE
     Source/SampleEditor.cpp
     Source/SequencerView.cpp
     Source/MixerView.cpp
+    Source/ChannelEqView.cpp
     Source/Panels.cpp
     Source/Settings.cpp
     Source/Dialogs.cpp
@@ -124,6 +131,10 @@ target_link_libraries(Crate
 
 if(WIN32)
     target_link_libraries(Crate PRIVATE dwmapi)   # black title bars
+    target_link_libraries(Crate PRIVATE mfplat mfreadwrite mfuuid ole32)   # Media Foundation decoding
+endif()
+if(APPLE)
+    target_link_libraries(Crate PRIVATE "-framework AVFoundation" "-framework CoreMedia")
 endif()
 
 if(UNIX AND NOT APPLE)
@@ -141,6 +152,11 @@ if(CRATE_BUILD_TESTS)
     target_sources(CrateTests PRIVATE Tests/EngineTests.cpp ${CRATE_ENGINE_SOURCES})
     target_include_directories(CrateTests PRIVATE Source)
     target_compile_definitions(CrateTests PRIVATE ${CRATE_DEFINITIONS})
+    if(WIN32)
+        target_link_libraries(CrateTests PRIVATE mfplat mfreadwrite mfuuid ole32)
+    elseif(APPLE)
+        target_link_libraries(CrateTests PRIVATE "-framework AVFoundation" "-framework CoreMedia")
+    endif()
     target_link_libraries(CrateTests PRIVATE
         juce::juce_audio_utils juce::juce_audio_processors juce::juce_dsp juce::juce_gui_extra
         juce::juce_recommended_config_flags)

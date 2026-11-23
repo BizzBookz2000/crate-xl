@@ -97,6 +97,25 @@ struct Serializer
         set (o, "sendPre", pre);
         for (auto& s : st.inserts) ins.add (slotToVar (s));
         set (o, "inserts", ins);
+        if (st.frozen) set (o, "frozen", true);
+        if (! st.eq.isDefault() || st.eq.bypassEq || st.eq.bypassFilters || st.eq.bypassInserts)
+        {
+            const auto& q = st.eq;
+            var e = obj();
+            set (e, "trim", q.trimDb); set (e, "invert", q.invert); set (e, "width", q.width);
+            set (e, "bypassInserts", q.bypassInserts); set (e, "bypassEq", q.bypassEq); set (e, "bypassFilters", q.bypassFilters);
+            juce::Array<var> bands;
+            for (auto& b : q.band)
+            {
+                var bv = obj();
+                set (bv, "on", b.on); set (bv, "freq", b.freq); set (bv, "gain", b.gain); set (bv, "q", b.q); set (bv, "bell", b.bell);
+                bands.add (bv);
+            }
+            set (e, "bands", bands);
+            set (e, "hpfOn", q.hpfOn); set (e, "hpfFreq", q.hpfFreq); set (e, "hpfSlope", q.hpfSlope);
+            set (e, "lpfOn", q.lpfOn); set (e, "lpfFreq", q.lpfFreq); set (e, "lpfSlope", q.lpfSlope);
+            set (o, "eq", e);
+        }
         return o;
     }
 
@@ -111,6 +130,24 @@ struct Serializer
         st.output = v.getProperty ("output", 0);
         if (auto* a = v.getProperty ("sends", var()).getArray()) for (int i = 0; i < juce::jmin (cr::numAux, a->size()); ++i) st.send[i] = (*a)[i];
         if (auto* a = v.getProperty ("sendPre", var()).getArray()) for (int i = 0; i < juce::jmin (cr::numAux, a->size()); ++i) st.sendPre[i] = (*a)[i];
+        st.eq = {};
+        st.frozen = v.getProperty ("frozen", false);
+        if (auto e = v.getProperty ("eq", var()); e.isObject())
+        {
+            auto& q = st.eq;
+            q.trimDb = e.getProperty ("trim", 0.0f); q.invert = e.getProperty ("invert", false); q.width = e.getProperty ("width", 1.0f);
+            q.bypassInserts = e.getProperty ("bypassInserts", false); q.bypassEq = e.getProperty ("bypassEq", false); q.bypassFilters = e.getProperty ("bypassFilters", false);
+            if (auto* bands = e.getProperty ("bands", var()).getArray())
+                for (int i = 0; i < juce::jmin (4, bands->size()); ++i)
+                {
+                    const auto& bv = (*bands)[i];
+                    auto& b = q.band[i];
+                    b.on = bv.getProperty ("on", b.on); b.freq = bv.getProperty ("freq", b.freq); b.gain = bv.getProperty ("gain", b.gain);
+                    b.q = bv.getProperty ("q", b.q); b.bell = bv.getProperty ("bell", b.bell);
+                }
+            q.hpfOn = e.getProperty ("hpfOn", false); q.hpfFreq = e.getProperty ("hpfFreq", 80.0f); q.hpfSlope = e.getProperty ("hpfSlope", 1);
+            q.lpfOn = e.getProperty ("lpfOn", false); q.lpfFreq = e.getProperty ("lpfFreq", 16000.0f); q.lpfSlope = e.getProperty ("lpfSlope", 1);
+        }
         st.inserts.clear();
         if (auto* a = v.getProperty ("inserts", var()).getArray())
             for (auto& e : *a)
@@ -581,6 +618,7 @@ void Engine::pastePad (int b, int p)
         pad.channel.volume = fresh.channel.volume; pad.channel.pan = fresh.channel.pan;
         for (int a = 0; a < cr::numAux; ++a) { pad.channel.send[a] = fresh.channel.send[a]; pad.channel.sendPre[a] = fresh.channel.sendPre[a]; }
         pad.channel.inserts = std::move (fresh.channel.inserts);
+        pad.channel.eq = fresh.channel.eq;
         pad.channel.name = chName;
     }
     notifyStructureChanged();
@@ -687,6 +725,7 @@ bool Engine::saveSession (const juce::File& file, juce::String& error, bool copy
             Serializer::set (tv, "name", tr.name);
             Serializer::set (tv, "colour", tr.colour.toString());
             Serializer::set (tv, "strip", Serializer::stripToVar (tr.strip));
+            if (tr.frozenFrom >= 0) Serializer::set (tv, "frozenFrom", tr.frozenFrom);
             Serializer::set (tv, "inputSource", tr.inputSource);
             Serializer::set (tv, "inputPair", tr.inputPair);
             Serializer::set (tv, "inputMono", tr.inputMono);
@@ -814,6 +853,7 @@ bool Engine::loadSession (const juce::File& file, juce::String& error)
                 tr.name = tv.getProperty ("name", tr.name).toString();
                 tr.colour = juce::Colour::fromString (tv.getProperty ("colour", tr.colour.toString()).toString());
                 ser.varToStrip (tv.getProperty ("strip", var()), tr.strip);
+                tr.frozenFrom = tv.getProperty ("frozenFrom", -1);
                 tr.inputSource = tv.getProperty ("inputSource", 0);
                 tr.inputPair = tv.getProperty ("inputPair", 0);
                 tr.inputMono = tv.getProperty ("inputMono", false);
@@ -1015,13 +1055,38 @@ bool Engine::importMidi (const juce::File& file, int b, juce::String& error, boo
     // GM drum notes -> pads 1..16
     static const int gmMap[] = { 36, 38, 42, 46, 49, 51, 45, 48, 50, 37, 39, 44, 41, 43, 47, 56 };
 
+    // Type 1: one source per track that has notes. Type 0 (everything on one track):
+    // split by MIDI channel instead, so multi-instrument files still land on separate pads.
     std::vector<int> noteTracks;
+    std::vector<int> sourceChannel;   // 0 = all channels
     for (int t = 0; t < mf.getNumTracks(); ++t)
     {
         auto* seq = mf.getTrack (t);
-        for (int i = 0; i < seq->getNumEvents(); ++i) if (seq->getEventPointer (i)->message.isNoteOn()) { noteTracks.push_back (t); break; }
+        for (int i = 0; i < seq->getNumEvents(); ++i) if (seq->getEventPointer (i)->message.isNoteOn()) { noteTracks.push_back (t); sourceChannel.push_back (0); break; }
     }
     if (noteTracks.empty()) { error = "The MIDI file has no notes."; return false; }
+    if (noteTracks.size() == 1 && ! gm)
+    {
+        std::array<bool, 17> used {};
+        auto* seq = mf.getTrack (noteTracks[0]);
+        for (int i = 0; i < seq->getNumEvents(); ++i) if (seq->getEventPointer (i)->message.isNoteOn()) used[(size_t) seq->getEventPointer (i)->message.getChannel()] = true;
+        if (std::count (used.begin(), used.end(), true) > 1)
+        {
+            const int t0 = noteTracks[0];
+            noteTracks.clear(); sourceChannel.clear();
+            for (int ch = 1; ch <= 16; ++ch) if (used[(size_t) ch]) { noteTracks.push_back (t0); sourceChannel.push_back (ch); }
+        }
+    }
+    // tempo and meter: the file's first tempo and time signature become the session's
+    {
+        juce::MidiMessageSequence meta;
+        mf.findAllTempoEvents (meta);
+        if (meta.getNumEvents() > 0)
+        {
+            const double spq = meta.getEventPointer (0)->message.getTempoSecondsPerQuarterNote();
+            if (spq > 0.0) setBpm (juce::jlimit (20.0, 300.0, 60.0 / spq));
+        }
+    }
 
     checkpoint();
     createBank (b);
@@ -1036,6 +1101,7 @@ bool Engine::importMidi (const juce::File& file, int b, juce::String& error, boo
         {
             auto* e = seq.getEventPointer (i);
             if (! e->message.isNoteOn()) continue;
+            if (sourceChannel[ti] > 0 && e->message.getChannel() != sourceChannel[ti]) continue;
             const double startQ = e->message.getTimeStamp() / tpq;
             const double endQ = e->noteOffObject != nullptr ? e->noteOffObject->message.getTimeStamp() / tpq : startQ + 0.25;
             cr::Note n;
@@ -1162,7 +1228,7 @@ bool Engine::exportAudio (const juce::File& file, const ExportOptions& options, 
 
     for (size_t j = 0; j < jobs.size() && ok; ++j)
     {
-        auto target = jobs[j].first < 0 ? file
+        auto target = (jobs[j].first < 0 || (options.writeToExactFile && jobs.size() == 1)) ? file
                                         : file.getSiblingFile (file.getFileNameWithoutExtension() + " - " + juce::File::createLegalFileName (jobs[j].second) + file.getFileExtension());
         juce::AudioBuffer<float> mix (2, (int) total);
         mix.clear();
@@ -1170,6 +1236,8 @@ bool Engine::exportAudio (const juce::File& file, const ExportOptions& options, 
             const juce::ScopedLock sl (lock);
             offlineRender = true;
             exportSoloKey = jobs[j].first;
+            exportBypassMaster = options.bypassMaster;
+            exportIncludeReturns = options.includeReturns;
             sess.loopOn = false;
             for (auto& v : voices) { v.active = false; v.sample.reset(); v.stretched.reset(); }
             scheduledOffs.clear();
@@ -1222,6 +1290,7 @@ bool Engine::exportAudio (const juce::File& file, const ExportOptions& options, 
         playing = false;
         offlineRender = false;
         exportSoloKey = -1;
+        exportBypassMaster = exportIncludeReturns = false;
         sess.loopOn = wasLoop;
         for (int b = 0; b < cr::numBanks; ++b) sess.banks[(size_t) b].source = sources[(size_t) b];
         for (auto& v : voices) { v.active = false; v.sample.reset(); v.stretched.reset(); }

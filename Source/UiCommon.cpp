@@ -916,7 +916,156 @@ juce::String stripPath (int key)
 
 bool isAudioFile (const juce::File& f)
 {
-    return f.hasFileExtension ("wav;aif;aiff;flac;ogg;mp3;caf;m4a");
+    return f.hasFileExtension (Engine::importableExtensions());
+}
+
+namespace
+{
+// Loads stems on a background thread with a progress window, then adds one track per
+// file on the message thread. The UI keeps running the whole time.
+class StemImportJob : public juce::ThreadWithProgressWindow
+{
+public:
+    StemImportJob (juce::StringArray f, int tick)
+        : juce::ThreadWithProgressWindow ("Importing audio", true, true), files (std::move (f)), originTick (tick) {}
+
+    void run() override
+    {
+        for (int i = 0; i < files.size() && ! threadShouldExit(); ++i)
+        {
+            const juce::File f (files[i]);
+            setStatusMessage ("Loading " + f.getFileName() + "  (" + juce::String (i + 1) + " of " + juce::String (files.size()) + ")");
+            setProgress ((double) i / files.size());
+            stems.push_back (Engine::get().prepareStem (f));
+        }
+        setProgress (1.0);
+    }
+
+    void threadComplete (bool cancelled) override
+    {
+        juce::String err;
+        int added = 0;
+        if (! cancelled) added = Engine::get().addStemTracks (stems, originTick, err);
+        stems.clear();
+        ViewBase::broadcast();
+        if (! cancelled) Nav::setStatus ("Imported " + juce::String (added) + (added == 1 ? " track" : " tracks"));
+        if (err.isNotEmpty()) showError ("Some files weren't imported", err);
+        delete this;
+    }
+
+private:
+    juce::StringArray files;
+    int originTick = 0;
+    std::vector<Engine::Stem> stems;
+};
+}
+
+// ============================================================================
+// Resampling menus
+// ============================================================================
+namespace
+{
+class BounceJob : public juce::ThreadWithProgressWindow
+{
+public:
+    BounceJob (int k, BounceOptions o) : juce::ThreadWithProgressWindow (o.freeze ? "Freezing..." : "Bouncing...", true, true), key (k), options (o) {}
+    void run() override
+    {
+        track = Engine::get().bounceToTrack (key, options, error, [this] (float p) { setProgress (p); return ! threadShouldExit(); });
+    }
+    void threadComplete (bool) override
+    {
+        ViewBase::broadcast();
+        if (track < 0) showError (options.freeze ? "Freeze" : "Bounce", error.isNotEmpty() ? error : juce::String ("Cancelled."));
+        else Nav::setStatus (options.freeze ? "Frozen: the new track plays it; Unfreeze to edit again" : "Bounced to a new audio track");
+        delete this;
+    }
+private:
+    int key, track = -1;
+    BounceOptions options;
+    juce::String error;
+};
+}
+
+void addResampleItems (juce::PopupMenu& m, int key)
+{
+    auto& e = Engine::get();
+    if (key == 3000 || e.getStrip (key) == nullptr) return;
+    const bool frozen = e.isFrozen (key);
+    juce::PopupMenu r;
+    r.addItem (901, "Bounce to a new audio track", ! frozen);
+    r.addItem (902, "Bounce with sends printed (AUX returns included)", ! frozen);
+    if (key >= 1000 && key < 2000) r.addItem (903, "Bounce and remove this track", ! frozen);
+    if (key < 10000)
+    {
+        r.addSeparator();
+        if (frozen) r.addItem (905, "Unfreeze");
+        else r.addItem (904, "Freeze (render it, save the CPU)");
+    }
+    m.addSubMenu ("Resample", r);
+}
+
+bool handleResampleItem (int r, int key)
+{
+    if (r < 901 || r > 905) return false;
+    auto& e = Engine::get();
+    if (r == 905) { e.unfreeze (key); ViewBase::broadcast(); return true; }
+    BounceOptions o;
+    o.printSends = r == 902;
+    o.removeSource = r == 903;
+    o.freeze = r == 904;
+    if (e.getSongLengthTicks() <= 0) { showError ("Resample", "There's nothing in the song to render yet. Arrange some clips first."); return true; }
+    (new BounceJob (key, o))->launchThread();
+    return true;
+}
+
+void addLiveSourceItems (juce::PopupMenu& internal, int current, int excludeTrack)
+{
+    auto& e = Engine::get();
+    auto& s = e.session();
+    juce::PopupMenu tracks, pads;
+    for (int t = 0; t < cr::maxAudioTracks; ++t)
+        if (s.audioTracks[(size_t) t].created && t != excludeTrack)
+            tracks.addItem (1000 + t, s.audioTracks[(size_t) t].name, true, current == 400 + t);
+    const int b = e.selectedBank;
+    for (int p = 0; p < cr::numPads; ++p)
+    {
+        const auto& pad = s.banks[(size_t) b].pads[(size_t) p];
+        if (! pad.hasSound()) continue;
+        const int key = b * cr::numPads + p;
+        pads.addItem (20000 + key, cr::bankLetter (b) + "." + juce::String (p + 1) + "  " + (pad.name.isNotEmpty() ? pad.name : juce::String ("Pad")),
+                      true, current == 10000 + key);
+    }
+    if (tracks.getNumItems() > 0) internal.addSubMenu ("Audio track", tracks);
+    if (pads.getNumItems() > 0) internal.addSubMenu ("Pad / instrument (" + cr::bankName (b) + ")", pads);
+}
+
+int liveSourceForMenuResult (int r)
+{
+    if (r >= 20000) return 10000 + (r - 20000);
+    if (r >= 1000 && r < 1000 + cr::maxAudioTracks) return 400 + (r - 1000);
+    return -1;
+}
+
+juce::String liveSourceName (int source)
+{
+    auto& s = Engine::get().session();
+    if (source >= 400 && source < 400 + cr::maxAudioTracks) return s.audioTracks[(size_t) (source - 400)].name;
+    if (source >= 10000)
+    {
+        const int k = source - 10000;
+        const auto& pad = s.banks[(size_t) (k / cr::numPads)].pads[(size_t) (k % cr::numPads)];
+        return cr::bankLetter (k / cr::numPads) + "." + juce::String (k % cr::numPads + 1) + (pad.name.isNotEmpty() ? " " + pad.name : juce::String());
+    }
+    return {};
+}
+
+void importStems (const juce::StringArray& files, int originTick)
+{
+    juce::StringArray audio;
+    for (auto& f : files) if (isAudioFile (juce::File (f))) audio.add (f);
+    if (audio.isEmpty()) return;
+    (new StemImportJob (audio, originTick))->launchThread();
 }
 
 void showError (const juce::String& title, const juce::String& message)

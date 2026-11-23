@@ -66,6 +66,27 @@ struct RecorderSettings
     float maxSeconds = 300.0f;
 };
 
+// Mono ring buffer the audio thread writes and the analyzer display reads.
+struct AnalyzerTap
+{
+    static constexpr int size = 16384;
+    std::array<float, size> data {};
+    std::atomic<int> write { 0 };
+    void push (const juce::AudioBuffer<float>& b, int n)
+    {
+        int w = write.load (std::memory_order_relaxed);
+        const float* l = b.getReadPointer (0);
+        const float* r = b.getReadPointer (juce::jmin (1, b.getNumChannels() - 1));
+        for (int i = 0; i < n; ++i) { data[(size_t) w] = 0.5f * (l[i] + r[i]); w = (w + 1) & (size - 1); }
+        write.store (w, std::memory_order_release);
+    }
+    void read (float* dest, int count) const
+    {
+        const int w = write.load (std::memory_order_acquire);
+        for (int i = 0; i < count; ++i) dest[i] = data[(size_t) ((w - count + i) & (size - 1))];
+    }
+};
+
 struct ExportOptions
 {
     bool stems = false;              // one file per track instead of the main mix
@@ -75,6 +96,19 @@ struct ExportOptions
     bool normalize = false;
     double sampleRate = 0.0;         // 0 = device rate
     bool includeTail = true;         // render 2 extra seconds for reverb / delay tails
+    bool bypassMaster = false;       // leave the main bus effects and fader out (bounces)
+    bool includeReturns = false;     // stems: also print the AUX returns the channel feeds
+    bool writeToExactFile = false;   // single stem: write to 'file' itself, not "file - name.wav"
+};
+
+struct BounceOptions
+{
+    bool printSends = false;         // include what the channel sends to the AUX returns
+    bool freeze = false;             // freeze: render at unity, the new track takes over the fader and sends
+    bool muteSource = true;
+    bool removeSource = false;       // audio tracks only
+    bool includeTail = true;
+    int startTick = 0, endTick = 0;  // 0 / 0 = the whole song
 };
 
 // ============================================================================
@@ -233,7 +267,10 @@ public:
     void copyPad (int bank, int pad);
     void pastePad (int bank, int pad);
     bool hasPadClipboard() const { return padClipboard != nullptr; }
-    cr::Strip* getStrip (int key);   // 0..127 bank, 1000 + t audio, 2000 + a aux, 3000 master, 10000 + b * 128 + p pad
+    cr::Strip* getStrip (int key);
+    // Spectrum analyzer: the mixer picks one channel to watch (nullptr = none).
+    std::atomic<cr::Strip*> analyzerStrip { nullptr };
+    AnalyzerTap analyzerPre, analyzerPost;   // into the EQ / out of the EQ   // 0..127 bank, 1000 + t audio, 2000 + a aux, 3000 master, 10000 + b * 128 + p pad
 
     // ---- parameters, macros, MIDI learn -----------------------------------------------------
     bool getParamInfo (const cr::ParamAddress& a, cr::ParamInfo& info);
@@ -277,6 +314,30 @@ public:
     bool importMidi (const juce::File& file, int bank, juce::String& error, bool generalMidiMap = false);
     bool exportPatternMidi (int bank, int pattern, const juce::File& file, juce::String& error);
     bool importAudioToTracks (const juce::StringArray& files, juce::String& error);
+
+    // Resampling (EngineResample.cpp). Strip keys as in getStrip(). Rendering runs offline on the calling thread.
+    int bounceToTrack (int stripKey, const BounceOptions& options, juce::String& error, std::function<bool (float)> progress = {});
+    bool unfreeze (int stripKey);
+    bool isFrozen (int stripKey);
+    juce::String stripDisplayName (int stripKey);
+    cr::SamplePtr clipToSample (int track, int clip);                  // the clip's audio as a new in-memory sample
+    bool exportClip (int track, int clip, const juce::File& file, juce::String& error);
+    int firstEmptyPad (int bank, int from = 0);                         // -1 when the bank is full
+
+    // Stem import (EngineImport.cpp). prepareStem runs on any thread; addStemTracks on the message thread.
+    struct Stem
+    {
+        juce::File file;
+        juce::String name, error;
+        cr::SamplePtr sample;
+        double timeSeconds = -1.0;   // Broadcast WAV time reference, -1 when there isn't one
+    };
+    Stem prepareStem (const juce::File& file);
+    int addStemTracks (std::vector<Stem>& stems, int originTick, juce::String& error);
+    static juce::String importableExtensions();
+    static bool isVideoFile (const juce::File& f);
+    static double readBroadcastTimeSeconds (const juce::File& f);
+    static bool decodeWithPlatform (const juce::File& file, juce::AudioBuffer<float>& out, double& sampleRate, juce::String& error);
     bool exportAudio (const juce::File& file, const ExportOptions& options, juce::String& error,
                       std::function<bool (float)> progress = {});
     bool saveSliceFiles (int bank, int pad, int layer, int zone, const std::vector<float>& slices, juce::String& error);
@@ -384,6 +445,9 @@ private:
     void fetchWindow (Voice& v, juce::int64 first, juce::int64 last);
     juce::AudioBuffer<float>* getBus (std::vector<Bus>& pool, int& used, int key, int n);
     void processStrip (cr::Strip& strip, juce::AudioBuffer<float>& buffer, int n);
+    void processChannel (cr::Strip& st, juce::AudioBuffer<float>& buf, int n);
+    // Live resampling sources beyond main / banks / AUX: 400 + t = audio track t, 10000 + b * 128 + p = pad (instrument) output.
+    bool copyInternalSource (int source, int n, int requestingTrack);
     void processChain (std::vector<cr::InsertSlot>& chain, juce::AudioBuffer<float>& buffer, int n);
     void processSlot (cr::InsertSlot& slot, juce::AudioBuffer<float>& buffer, int n);
     void processPlugin (juce::AudioPluginInstance& plugin, juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi, int n);
@@ -491,7 +555,8 @@ private:
     int samplingLength = 0;
     juce::AudioBuffer<float> samplingBuffer;
     std::atomic<float> inputLevel { 0.0f };
-    std::array<int, 32> activeInputToHardware {};   // device callback's packed input index -> hardware channel
+    std::array<int, 32> activeInputToHardware {};    // device callback's packed input index -> hardware channel
+    std::vector<float> clipStreamL, clipStreamR;     // disk-streamed clip window (pre-allocated)
 
     // audio track recording
     juce::TimeSliceThread diskWriterThread { "Crate disk writer" };
@@ -526,6 +591,7 @@ private:
     // export
     bool offlineRender = false;
     int exportSoloKey = -1;
+    bool exportBypassMaster = false, exportIncludeReturns = false;
 
     // automation touch: parameters the user is currently moving are not overwritten by playback
     std::map<juce::String, double> touchedUntil;

@@ -23,10 +23,18 @@ cr::SamplePtr Engine::loadSample (const juce::File& file, bool streamFromDisk)
 {
     if (! file.existsAsFile()) return nullptr;
     auto* format = formatManager.findFormatForFileExtension (file.getFileExtension());
-    if (format == nullptr) return nullptr;
-
-    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file));
-    if (reader == nullptr || reader->lengthInSamples <= 0) return nullptr;
+    std::unique_ptr<juce::AudioFormatReader> reader (format != nullptr ? formatManager.createReaderFor (file) : nullptr);
+    if (reader == nullptr || reader->lengthInSamples <= 0)
+    {
+        // Not something JUCE reads (AAC / M4A on Windows, WMA, video soundtracks...): try the OS decoders.
+        auto s = std::make_shared<cr::SampleData>();
+        juce::String err;
+        if (! decodeWithPlatform (file, s->buffer, s->sampleRate, err)) return nullptr;
+        s->file = file;
+        s->name = file.getFileNameWithoutExtension();
+        s->numFrames = s->buffer.getNumSamples();
+        return s;
+    }
     const double seconds = (double) reader->lengthInSamples / reader->sampleRate;
     const bool wantStream = streamFromDisk || (behaviours.streamLongSamples && seconds > 30.0);
 
@@ -191,6 +199,7 @@ void Engine::clearPad (int b, int p)
         pad.padNote = 60;
         pad.channel.volume = 0.8f;
         pad.channel.pan = 0.0f;
+        pad.channel.eq = {};
         pad.channel.mute = pad.channel.solo = false;
         for (auto& s : pad.channel.send) s = 0.0f;
     }

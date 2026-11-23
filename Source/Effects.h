@@ -27,6 +27,11 @@ public:
 
     void setTempo (double bpm) { tempo = bpm; }
 
+    // Effects that shape the frequency response report it here, so the mixer can
+    // draw their curve on the channel EQ display (message thread only).
+    virtual bool hasFrequencyResponse() const { return false; }
+    virtual double getResponseDb (double /*freq*/, double /*sampleRate*/) const { return 0.0; }
+
     std::vector<FxParam> params;
 
     float get (int index) const { return params[(size_t) index].value; }

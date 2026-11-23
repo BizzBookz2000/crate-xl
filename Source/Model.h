@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include "ChannelEq.h"
 #include "Effects.h"
 
 // ============================================================================
@@ -19,7 +20,7 @@ constexpr int numPads        = 128;
 constexpr int numAux         = 8;
 constexpr int numLayerFx     = 4;
 constexpr int numMacros      = 16;
-constexpr int maxAudioTracks = 16;
+constexpr int maxAudioTracks = 256;
 constexpr int numRepeatSlots = 6;
 constexpr int ppq            = 96;   // ticks per quarter note
 constexpr int songBars       = 512;
@@ -64,7 +65,10 @@ struct ParamAddress
 };
 
 // strip fields
-enum StripField { stripVolume = 0, stripPan = 1, stripSend0 = 2 }; // send i = stripSend0 + i
+enum StripField { stripVolume = 0, stripPan = 1, stripSend0 = 2,   // send i = stripSend0 + i
+                  stripTrim = 20, stripWidth = 21,
+                  stripEq0 = 30,                         // band b: freq 30 + 3b, gain 31 + 3b, q 32 + 3b (b = 0..3)
+                  stripHpf = 42, stripLpf = 43 };
 
 // layer fields
 enum LayerField
@@ -261,7 +265,14 @@ struct Strip
     std::vector<InsertSlot> inserts;   // unlimited
     int output = 0;                    // 0 = main, k > 0 = hardware output pair k (outs 2k+1, 2k+2)
     std::atomic<float> meterL { 0.0f }, meterR { 0.0f }, peakHold { 0.0f };
+    std::atomic<float> rmsL { 0.0f }, rmsR { 0.0f };
+    std::atomic<bool> clipped { false };          // latched until the clip light is clicked
     int latency = 0;                   // computed: plugin latency of this strip's inserts
+
+    // channel strip: trim, phase, EQ, HPF / LPF, width, bypasses (see ChannelEq.h)
+    ChannelEqSettings eq;
+    ChannelEqDsp eqDsp;
+    bool frozen = false;               // rendered to an audio track; skipped by the engine until unfrozen
 };
 
 struct PadMidi
@@ -409,6 +420,7 @@ struct AudioTrack
     bool armed = false, monitor = false;
     TrackSource source = TrackSource::song;
     std::vector<AudioClip> clips;
+    int frozenFrom = -1;     // strip key this track is the frozen render of (-1 = an ordinary track)
 };
 
 struct Scene

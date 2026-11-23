@@ -620,7 +620,7 @@ void MainComponent::filesDropped (const juce::StringArray& files, int, int)
     }
     if (! audio.isEmpty())
     {
-        if (currentView == Nav::sequencer) e.importAudioToTracks (audio, err);
+        if (currentView == Nav::sequencer) importStems (audio, audio.size() > 1 ? 0 : (int) e.getPositionTicks());
         else
         {
             int pad = e.selectedPad;

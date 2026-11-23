@@ -82,7 +82,8 @@ public:
         }
         if (r.source == 1) return "Main out (resample)";
         if (r.source >= 2 && r.source < 2 + cr::numBanks) return e.session().banks[(size_t) (r.source - 2)].name;
-        return e.session().aux[(size_t) juce::jlimit (0, cr::numAux - 1, r.source - 200)].name;
+        if (r.source >= 200 && r.source < 200 + cr::numAux) return e.session().aux[(size_t) (r.source - 200)].name;
+        return liveSourceName (r.source);
     }
 
     void paint (juce::Graphics& g) override
@@ -160,12 +161,14 @@ private:
         internal.addItem (300, "Main out (resample)", true, rs.source == 1);
         for (int b = 0; b < cr::numBanks; ++b) if (e.session().banks[(size_t) b].created) internal.addItem (400 + b, e.session().banks[(size_t) b].name, true, rs.source == 2 + b);
         for (int a = 0; a < e.session().auxCount; ++a) internal.addItem (600 + a, e.session().aux[(size_t) a].name, true, rs.source == 200 + a);
+        addLiveSourceItems (internal, rs.source, -1);
         m.addSubMenu ("Stereo inputs", hw);
         m.addSubMenu ("Mono inputs", mono);
         m.addSubMenu ("Inside the app", internal);
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&source), [this] (int r)
         {
             auto& rr = Engine::get().recorder;
+            if (const int live = liveSourceForMenuResult (r); live >= 0) { rr.source = live; inputError.clear(); source.repaint(); repaint(); return; }
             if (r >= 600) rr.source = 200 + r - 600;
             else if (r >= 400) rr.source = 2 + r - 400;
             else if (r == 300) rr.source = 1;

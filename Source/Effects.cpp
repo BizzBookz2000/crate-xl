@@ -1,3 +1,4 @@
+#include <complex>
 #include "Effects.h"
 #include "DspUtils.h"
 
@@ -21,6 +22,25 @@ public:
     }
 
     juce::String getType() const override { return "6-Band EQ"; }
+
+    bool hasFrequencyResponse() const override { return true; }
+    double getResponseDb (double freq, double sr) const override
+    {
+        const float q = get (12);
+        double db = get (13);
+        for (int b = 0; b < 6; ++b)
+        {
+            if (std::abs (get (b * 2 + 1)) <= 0.01f) continue;
+            const float f = juce::jlimit (20.0f, (float) sr * 0.45f, get (b * 2));
+            const float g = juce::Decibels::decibelsToGain (get (b * 2 + 1));
+            juce::dsp::IIR::Coefficients<float>::Ptr c;
+            if (b == 0)      c = juce::dsp::IIR::Coefficients<float>::makeLowShelf (sr, f, q, g);
+            else if (b == 5) c = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, f, q, g);
+            else             c = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, f, q, g);
+            db += juce::Decibels::gainToDecibels (c->getMagnitudeForFrequency (freq, sr), -120.0);
+        }
+        return db;
+    }
 
     void prepare (double sr, int) override { sampleRate = sr; lastHash = -1.0f; reset(); }
 
@@ -393,6 +413,23 @@ public:
     }
 
     juce::String getType() const override { return "Filter"; }
+
+    bool hasFrequencyResponse() const override { return true; }
+    double getResponseDb (double freq, double) const override
+    {
+        // second-order state-variable response at the centre of the LFO sweep
+        const double x = freq / juce::jmax (1.0f, get (1)), q = juce::jmax (0.1f, get (2));
+        const std::complex<double> den (1.0 - x * x, x / q);
+        std::complex<double> num;
+        switch (getChoice (0))
+        {
+            case 0:  num = 1.0; break;                                  // low pass
+            case 1:  num = -x * x; break;                               // high pass
+            case 2:  num = std::complex<double> (0.0, x / q); break;    // band pass
+            default: num = 1.0 - x * x; break;                          // notch
+        }
+        return 20.0 * std::log10 (juce::jmax (1.0e-9, std::abs (num / den)));
+    }
     void prepare (double sr, int) override { sampleRate = sr; reset(); }
     void reset() override { for (auto& f : svf) f.reset(); }
 

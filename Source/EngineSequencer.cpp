@@ -232,6 +232,7 @@ void Engine::deliverToPad (int b, int p, int key, float vel, bool on, int offset
 {
     auto& bank = sess.banks[(size_t) b];
     auto& pad = bank.pads[(size_t) p];
+    if (on && (bank.strip.frozen || pad.channel.frozen)) return;   // frozen: the audio track plays instead
 
     if (on)
     {

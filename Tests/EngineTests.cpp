@@ -103,7 +103,8 @@ int main (int argc, char** argv)
     auto sine = makeWav ("sine440", 440.0, 1.0);
     auto loop = makeWav ("loop", 0.0, 2.0, 0.8f, true, 120.0);
 
-    Engine e (false);
+    auto enginePtr = std::make_unique<Engine> (false);
+    Engine& e = *enginePtr;
     e.prepareOffline (sr, block);
     e.behaviours.defaultGainDb = 0.0f;
 
@@ -478,6 +479,140 @@ int main (int argc, char** argv)
         o.stems = true;
         check (e.exportAudio (tempDir().getChildFile ("stems.wav"), o, err), "export stems");
         check (tempDir().getChildFile ("stems - Drums.wav").existsAsFile(), "stem file per track");
+    }
+
+    std::cout << "Channel EQ" << std::endl;
+    {
+        auto sineLevelDb = [sr] (cr::ChannelEqSettings q, double freq)
+        {
+            cr::ChannelEqDsp dsp;
+            const int len = 48000;
+            juce::AudioBuffer<float> b (2, len);
+            for (int i = 0; i < len; ++i) { const float x = 0.25f * (float) std::sin (juce::MathConstants<double>::twoPi * freq * i / sr); b.setSample (0, i, x); b.setSample (1, i, x); }
+            for (int start = 0; start < len; start += 512) { juce::AudioBuffer<float> v (b.getArrayOfWritePointers(), 2, start, juce::jmin (512, len - start)); dsp.process (q, v, v.getNumSamples(), sr); }
+            return gainToDb (b.getRMSLevel (0, len / 2, len / 2) / (0.25f / std::sqrt (2.0f)));
+        };
+        cr::ChannelEqSettings q;
+        q.band[2].on = true; q.band[2].freq = 2000.0f; q.band[2].gain = 12.0f; q.band[2].q = 1.0f;
+        const float boost = sineLevelDb (q, 2000.0);
+        check (std::abs (boost - 12.0f) < 0.3f, "HMF +12 dB bell boosts 2 kHz by 12 dB (" + juce::String (boost, 2) + ")");
+        check (std::abs (cr::responseDb (q, 2000.0, sr) - 12.0) < 0.05, "drawn curve matches the audio at the band centre");
+        cr::ChannelEqSettings h;
+        h.hpfOn = true; h.hpfFreq = 1000.0f; h.hpfSlope = 1;
+        const float cut = sineLevelDb (h, 250.0);
+        check (cut < -45.0f && cut > -51.0f, "HPF 24 dB/oct at 1 kHz: 2 octaves below is about -48 dB (" + juce::String (cut, 1) + ")");
+        check (std::abs (cut - (float) cr::responseDb (h, 250.0, sr)) < 0.5f, "HPF curve matches the audio");
+        h.hpfSlope = 2;
+        check (sineLevelDb (h, 250.0) < -85.0f, "48 dB/oct slope is twice as steep");
+        cr::ChannelEqSettings l;
+        l.lpfOn = true; l.lpfFreq = 1000.0f; l.lpfSlope = 0;
+        check (std::abs (sineLevelDb (l, 1000.0) + 3.0f) < 0.3f, "LPF 12 dB/oct is -3 dB at the cutoff");
+        cr::ChannelEqSettings sh;
+        sh.band[0].on = true; sh.band[0].freq = 200.0f; sh.band[0].gain = -9.0f;
+        check (std::abs (sineLevelDb (sh, 40.0) + 9.0f) < 0.5f, "LF shelf -9 dB cuts the lows by 9 dB");
+        sh.bypassEq = true;
+        check (std::abs (sineLevelDb (sh, 40.0)) < 0.1f, "EQ bypass passes the signal untouched");
+
+        // the full channel path: trim, phase, width
+        {
+            const juce::ScopedLock sl (e.getLock());
+            auto& st = e.session().master;
+            st.eq.trimDb = -6.0f;
+        }
+        check (std::abs (e.getParamValue (cr::ParamAddress::parse ("master/trim")) + 6.0f) < 0.001f, "trim is an addressable parameter (MIDI learn / automation)");
+        e.setParamValue (cr::ParamAddress::parse ("master/eq2g"), 4.5f, false);
+        check (std::abs (e.session().master.eq.band[2].gain - 4.5f) < 0.001f, "EQ gain is an addressable parameter");
+        e.session().master.eq = {};
+    }
+
+    std::cout << "Stem import" << std::endl;
+    {
+        // two impulse stems: B's Broadcast WAV stamp is 24007 frames after A's
+        auto writeStem = [] (const juce::String& name, juce::int64 timeRef, bool stamp)
+        {
+            auto f = tempDir().getChildFile (name + ".wav");
+            juce::AudioBuffer<float> b (2, 48000);
+            b.clear();
+            b.setSample (0, 1000, 0.9f); b.setSample (1, 1000, 0.9f);
+            std::unordered_map<juce::String, juce::String> meta;
+            if (stamp) meta[juce::WavAudioFormat::bwavTimeReference] = juce::String (timeRef);
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::OutputStream> os (f.createOutputStream().release());
+            auto w = wav.createWriterFor (os, juce::AudioFormatWriterOptions{}.withSampleRate (48000.0).withNumChannels (2).withBitsPerSample (24).withMetadataValues (meta));
+            if (w) w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+            return f;
+        };
+        const juce::int64 refA = 48000LL * 3600, gap = 24007;
+        std::vector<Engine::Stem> stems { e.prepareStem (writeStem ("Kick stem", refA, true)),
+                                          e.prepareStem (writeStem ("Snare stem", refA + gap, true)) };
+        check (std::abs (stems[0].timeSeconds - 3600.0) < 1.0e-9, "Broadcast WAV time reference is read");
+        check (stems[0].sample && stems[0].sample->isStreamed(), "WAV stems stream from disk");
+        // mute everything else, then play the two new tracks
+        for (auto& b : e.session().banks) b.strip.mute = true;
+        for (auto& t : e.session().audioTracks) t.strip.mute = true;
+        juce::String err;
+        const int before = [&e] { int n = 0; for (auto& t : e.session().audioTracks) if (t.created) ++n; return n; }();
+        check (e.addStemTracks (stems, 0, err) == 2 && err.isEmpty(), "one track per stem " + err);
+        int after = 0, tA = -1, tB = -1;
+        for (int t = 0; t < cr::maxAudioTracks; ++t)
+            if (e.session().audioTracks[(size_t) t].created)
+            {
+                ++after;
+                if (e.session().audioTracks[(size_t) t].name == "Kick stem") tA = t;
+                if (e.session().audioTracks[(size_t) t].name == "Snare stem") tB = t;
+            }
+        check (after == before + 2 && tA >= 0 && tB >= 0, "tracks are named after the files");
+        if (tA >= 0 && tB >= 0)
+        {
+            check (e.session().audioTracks[(size_t) tA].clips[0].start == 0, "earliest stem starts at bar 1");
+            e.session().audioTracks[(size_t) tA].strip.mute = false;
+            e.session().audioTracks[(size_t) tB].strip.mute = false;
+            e.stop();
+            e.setPosition (0.0);
+            e.play();
+            auto out = render (e, 1.5);
+            e.stop();
+            std::vector<int> peaks;
+            for (int i = 0; i < out.getNumSamples(); ++i) if (std::abs (out.getSample (0, i)) > 0.3f) peaks.push_back (i);
+            const bool ok = peaks.size() == 2 && peaks[1] - peaks[0] == (int) gap;
+            check (ok, "stems keep their exact sample distance (" + (peaks.size() == 2 ? juce::String (peaks[1] - peaks[0]) : juce::String ((int) peaks.size()) + " peaks") + ", want 24007)");
+            check (! peaks.empty() && peaks[0] == 1000, "first stem plays sample-accurately from bar 1");
+        }
+        for (auto& b : e.session().banks) b.strip.mute = false;
+        for (auto& t : e.session().audioTracks) t.strip.mute = false;
+    }
+
+    std::cout << "Resampling" << std::endl;
+    {
+        // a bank that plays: pad 1 of bank 0, a note every beat for one bar
+        {
+            const juce::ScopedLock sl (e.getLock());
+            auto& b = e.session().banks[0];
+            b.strip.mute = false; b.strip.frozen = false;
+            b.patterns.assign (1, cr::Pattern());
+            for (int k = 0; k < 4; ++k) { cr::Note n; n.pad = 0; n.start = k * cr::ppq; n.length = cr::ppq / 2; n.velocity = 1.0f; b.patterns[0].notes.push_back (n); }
+            e.session().song = { { 0, 0, 0, cr::barTicks() } };
+        }
+        juce::String err;
+        BounceOptions bo;
+        bo.endTick = cr::barTicks();
+        bo.includeTail = false;
+        const int t = e.bounceToTrack (0, bo, err);
+        check (t >= 0, "bounce a bank to a new audio track " + err);
+        if (t >= 0)
+        {
+            auto& tr = e.session().audioTracks[(size_t) t];
+            auto smp = tr.clips.empty() ? nullptr : e.clipToSample (t, 0);
+            check (smp != nullptr && smp->buffer.getMagnitude (0, smp->buffer.getNumSamples()) > 0.05f, "the bounce has the bank's audio");
+            check (e.session().banks[0].strip.mute, "the source is muted after bouncing");
+            check (tr.name.endsWith ("(bounce)"), "the bounce track is named after the source");
+            e.deleteAudioTrack (t);
+            e.session().banks[0].strip.mute = false;
+        }
+        bo.freeze = true;
+        const int f = e.bounceToTrack (0, bo, err);
+        check (f >= 0 && e.isFrozen (0) && e.session().audioTracks[(size_t) f].frozenFrom == 0, "freeze renders the bank and freezes it");
+        check (e.unfreeze (0) && ! e.isFrozen (0) && ! e.session().audioTracks[(size_t) juce::jmax (0, f)].created, "unfreeze removes the frozen track and restores the bank");
     }
 
     // ---- plugin scan survives plugins that crash or hang ----

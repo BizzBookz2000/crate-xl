@@ -42,7 +42,7 @@ juce::String cr::ParamInfo::format (float v) const
             return juce::String (v, 2) + " s";
         case hertz:
             if (v >= 1000.0f) return juce::String (v / 1000.0f, 2) + " kHz";
-            return juce::String (v, v < 10.0f ? 2 : 0) + " Hz";
+            return (v < 10.0f ? juce::String (v, 2) : juce::String (juce::roundToInt (v))) + " Hz";
         case semitones: return (v > 0 ? "+" : "") + juce::String (v, std::abs (v - std::round (v)) < 0.01f ? 0 : 2) + " st";
         default: break;
     }
@@ -61,6 +61,15 @@ juce::String stripTail (const cr::ParamAddress& a)
     if (a.slot >= 0) return "fx" + juce::String (a.slot) + "/" + juce::String (a.field);
     if (a.field == cr::stripVolume) return "vol";
     if (a.field == cr::stripPan) return "pan";
+    if (a.field == cr::stripTrim) return "trim";
+    if (a.field == cr::stripWidth) return "width";
+    if (a.field == cr::stripHpf) return "hpf";
+    if (a.field == cr::stripLpf) return "lpf";
+    if (a.field >= cr::stripEq0 && a.field < cr::stripEq0 + 12)
+    {
+        const int k = a.field - cr::stripEq0;
+        return "eq" + juce::String (k / 3) + juce::String::charToString ("fgq"[k % 3]);
+    }
     return "send" + juce::String (a.field - cr::stripSend0);
 }
 
@@ -70,6 +79,16 @@ bool parseStripTail (const juce::StringArray& t, int i, cr::ParamAddress& a)
     const auto& f = t[i];
     if (f == "vol") a.field = cr::stripVolume;
     else if (f == "pan") a.field = cr::stripPan;
+    else if (f == "trim") a.field = cr::stripTrim;
+    else if (f == "width") a.field = cr::stripWidth;
+    else if (f == "hpf") a.field = cr::stripHpf;
+    else if (f == "lpf") a.field = cr::stripLpf;
+    else if (f.startsWith ("eq") && f.length() == 4)
+    {
+        const int b = juce::jlimit (0, 3, (int) (f[2] - '0'));
+        const int k = f[3] == 'f' ? 0 : (f[3] == 'g' ? 1 : 2);
+        a.field = cr::stripEq0 + b * 3 + k;
+    }
     else if (f.startsWith ("send")) a.field = cr::stripSend0 + f.substring (4).getIntValue();
     else if (f.startsWith ("fx") && i + 1 < t.size()) { a.slot = f.substring (2).getIntValue(); a.field = t[i + 1].getIntValue(); }
     else return false;
@@ -223,6 +242,16 @@ float* Engine::resolveFloat (const cr::ParamAddress& a)
         if (a.slot >= 0) return nullptr;
         if (a.field == cr::stripVolume) return &st->volume;
         if (a.field == cr::stripPan) return &st->pan;
+        if (a.field == cr::stripTrim) return &st->eq.trimDb;
+        if (a.field == cr::stripWidth) return &st->eq.width;
+        if (a.field == cr::stripHpf) return &st->eq.hpfFreq;
+        if (a.field == cr::stripLpf) return &st->eq.lpfFreq;
+        if (a.field >= cr::stripEq0 && a.field < cr::stripEq0 + 12)
+        {
+            auto& b = st->eq.band[(a.field - cr::stripEq0) / 3];
+            const int k = (a.field - cr::stripEq0) % 3;
+            return k == 0 ? &b.freq : (k == 1 ? &b.gain : &b.q);
+        }
         const int s = a.field - cr::stripSend0;
         if (juce::isPositiveAndBelow (s, cr::numAux)) return &st->send[s];
     }
@@ -270,6 +299,20 @@ bool Engine::getParamInfo (const cr::ParamAddress& a, cr::ParamInfo& info)
         case O::bank: case O::pad: case O::aux: case O::audio: case O::master:
             if (a.field == cr::stripVolume) { info.name = "Volume"; info.maxValue = 1.25f; info.defaultValue = 0.8f; info.display = cr::ParamInfo::gainDb; }
             else if (a.field == cr::stripPan) { info.name = "Pan"; info.minValue = -1.0f; info.defaultValue = 0.0f; info.display = cr::ParamInfo::panLR; }
+            else if (a.field == cr::stripTrim) { info.name = "Gain trim"; info.minValue = -24.0f; info.maxValue = 24.0f; info.defaultValue = 0.0f; info.suffix = " dB"; }
+            else if (a.field == cr::stripWidth) { info.name = "Width"; info.minValue = 0.0f; info.maxValue = 2.0f; info.defaultValue = 1.0f; info.display = cr::ParamInfo::percent; }
+            else if (a.field == cr::stripHpf) { info.name = "HPF"; info.minValue = cr::hpfRange().minF; info.maxValue = cr::hpfRange().maxF; info.defaultValue = 80.0f; info.logScale = true; info.display = cr::ParamInfo::hertz; }
+            else if (a.field == cr::stripLpf) { info.name = "LPF"; info.minValue = cr::lpfRange().minF; info.maxValue = cr::lpfRange().maxF; info.defaultValue = 16000.0f; info.logScale = true; info.display = cr::ParamInfo::hertz; }
+            else if (a.field >= cr::stripEq0 && a.field < cr::stripEq0 + 12)
+            {
+                static const char* bn[] = { "LF", "LMF", "HMF", "HF" };
+                static const float defF[] = { 100.0f, 400.0f, 2500.0f, 8000.0f };
+                const int b = (a.field - cr::stripEq0) / 3, k = (a.field - cr::stripEq0) % 3;
+                const auto rg = cr::bandRange (b);
+                if (k == 0) { info.name = juce::String (bn[b]) + " freq"; info.minValue = rg.minF; info.maxValue = rg.maxF; info.defaultValue = defF[b]; info.logScale = true; info.display = cr::ParamInfo::hertz; }
+                else if (k == 1) { info.name = juce::String (bn[b]) + " gain"; info.minValue = -18.0f; info.maxValue = 18.0f; info.defaultValue = 0.0f; info.suffix = " dB"; }
+                else { info.name = juce::String (bn[b]) + " Q"; info.minValue = 0.1f; info.maxValue = 10.0f; info.defaultValue = (b == 0 || b == 3) ? 0.7f : 1.0f; info.logScale = true; }
+            }
             else { info.name = "Send " + juce::String (a.field - cr::stripSend0 + 1); info.maxValue = 1.0f; info.defaultValue = 0.0f; info.display = cr::ParamInfo::gainDb; }
             return true;
         case O::layer:
@@ -581,6 +624,11 @@ juce::StringArray Engine::getAutomatableParams (int trackKey)
         out.add (prefix + "vol");
         out.add (prefix + "pan");
         for (int a = 0; a < sess.auxCount; ++a) out.add (prefix + "send" + juce::String (a));
+        out.add (prefix + "trim");
+        out.add (prefix + "width");
+        for (int b = 0; b < 4; ++b) for (auto k : { "f", "g", "q" }) out.add (prefix + "eq" + juce::String (b) + k);
+        out.add (prefix + "hpf");
+        out.add (prefix + "lpf");
         for (int s = 0; s < (int) st.inserts.size(); ++s)
         {
             auto& slot = st.inserts[(size_t) s];

@@ -843,6 +843,9 @@ public:
     void filesDropped (const juce::StringArray& files, int x, int y) override
     {
         int tick = juce::jmax (0, snapTo (axis.toTick ((float) x, laneArea().getX()), grid, true));
+        int count = 0;
+        for (auto& f : files) if (isAudioFile (juce::File (f))) ++count;
+        if (count > 1) { importStems (files, 0); return; }   // stems: one track each, lined up from bar 1
         for (auto& f : files) if (isAudioFile (juce::File (f))) dropAudio (juce::File (f), y, tick);
     }
 
@@ -926,7 +929,73 @@ public:
         m.addItem (4, "Repeat to fill 4 more times");
         m.addItem (5, "Edit pattern");
         m.addItem (6, "Make pattern unique (copy)");
-        m.showMenuAsync (juce::PopupMenu::Options(), [this] (int r) { clipAction (r); });
+        if (firstSelectedAudioClip().first >= 0)
+        {
+            m.addSeparator();
+            m.addSectionHeader ("Audio clip");
+            m.addItem (20, "Convert to sample (next empty pad)");
+            m.addItem (21, "Convert to sampler instrument (keys mode)");
+            m.addItem (22, "Slice to pads");
+            m.addItem (23, "Slice to pads + MIDI pattern");
+            m.addItem (24, "Export as WAV...");
+        }
+        m.showMenuAsync (juce::PopupMenu::Options(), [this] (int r) { if (r >= 20) audioClipAction (r); else clipAction (r); });
+    }
+
+    std::pair<int, int> firstSelectedAudioClip() const
+    {
+        auto& s = Engine::get().session();
+        for (int t = 0; t < cr::maxAudioTracks; ++t)
+            if (s.audioTracks[(size_t) t].created)
+                for (int c = 0; c < (int) s.audioTracks[(size_t) t].clips.size(); ++c)
+                    if (s.audioTracks[(size_t) t].clips[(size_t) c].selected) return { t, c };
+        return { -1, -1 };
+    }
+
+    // Beatmaker tools: turn an arrangement clip into pads.
+    void audioClipAction (int r)
+    {
+        auto& e = Engine::get();
+        const auto [t, c] = firstSelectedAudioClip();
+        if (t < 0) return;
+        if (r == 24)
+        {
+            auto name = juce::File::createLegalFileName (e.session().audioTracks[(size_t) t].name);
+            chooser = std::make_unique<juce::FileChooser> ("Export the clip as WAV", Engine::getExportsFolder().getChildFile (name + ".wav"), "*.wav");
+            chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [t = t, c = c] (const juce::FileChooser& fc)
+            {
+                auto f = fc.getResult();
+                if (f == juce::File()) return;
+                juce::String err;
+                if (Engine::get().exportClip (t, c, f.withFileExtension ("wav"), err)) Nav::setStatus ("Exported " + f.getFileName());
+                else showError ("Export", err);
+            });
+            return;
+        }
+        auto smp = e.clipToSample (t, c);
+        if (! smp) { showError ("Convert", "That clip has no audio."); return; }
+        const int bank = e.selectedBank;
+        const int pad = e.firstEmptyPad (bank, e.selectedPad);
+        if (pad < 0) { showError ("Convert", "There are no empty pads left in " + cr::bankName (bank) + "."); return; }
+        e.checkpointPad (bank, pad);
+        if (! e.setPadSample (bank, pad, smp)) return;
+        auto& p = e.session().banks[(size_t) bank].pads[(size_t) pad];
+        p.name = e.session().audioTracks[(size_t) t].name;
+        if (r == 21) p.keysMode = true;
+        e.selectedPad = pad;
+        juce::String msg = "Loaded onto " + cr::bankLetter (bank) + "." + juce::String (pad + 1);
+        if (r == 22 || r == 23)
+        {
+            auto points = e.autoSlice (bank, pad, 0, 0, 2, 0, 0.5f);
+            const int dest = e.firstEmptyPad (bank, pad + 1);
+            juce::String err;
+            if (points.size() < 2 || dest < 0) msg << " (no room or no hits to slice)";
+            else if (e.applySlices (bank, pad, 0, 0, points, Engine::SliceTarget::pads, bank, dest, 0, r == 23, 0.0f, 5.0f, err))
+                msg << ", " << (int) points.size() << " slices from " << cr::bankLetter (bank) << "." << (dest + 1) << (r == 23 ? " with a pattern" : "");
+            else msg << " (" << err << ")";
+        }
+        Nav::setStatus (msg);
+        ViewBase::broadcast();
     }
 
 public:
@@ -995,6 +1064,7 @@ private:
             m.addItem (5, "Monitor input", true, tr.monitor);
             m.addItem (6, "Noise gate", true, tr.gate);
         }
+        addResampleItems (m, key);
         m.showMenuAsync (juce::PopupMenu::Options(), [this, key] (int r)
         {
             auto& en = Engine::get();
@@ -1012,10 +1082,12 @@ private:
             else if (r == 4) { en.checkpoint(); en.deleteAudioTrack (key - 1000); rebuildRows(); }
             else if (r == 5) s.audioTracks[(size_t) (key - 1000)].monitor = ! s.audioTracks[(size_t) (key - 1000)].monitor;
             else if (r == 6) s.audioTracks[(size_t) (key - 1000)].gate = ! s.audioTracks[(size_t) (key - 1000)].gate;
+            else if (handleResampleItem (r, key)) {}
             ViewBase::broadcast();
         });
     }
 
+    std::unique_ptr<juce::FileChooser> chooser;
     struct Drag { bool active = false, resize = false; int anchorTick = 0; std::vector<std::pair<int, int>> startPositions; } drag;
     juce::Point<int> dragStart;
     juce::Rectangle<int> rubber;

@@ -84,9 +84,43 @@ You can also pass `-DCRATE_PRODUCT_NAME="My Name"` when configuring. The build s
 ### Mixer view
 
 - Channel strips for the main out, banks, audio tracks and AUX returns (up to 8). **Show pads** switches to per-pad channels.
-- Meters with peak hold, faders, pan, and pre/post-fader sends to every AUX.
-- Unlimited insert effects (built-in or plugin), with plugin latency compensation.
-- I/O view: audio-track inputs (stereo/mono hardware or internal resampling), input gain, noise gate, arm/monitor, and outputs to any hardware pair.
+- Every channel has the same strip, in this signal order: **Trim** (-24 to +24 dB) and **phase invert (Ø)** → unlimited **inserts** (built-in or plugin, with latency compensation) → **HPF / LPF** → **4-band EQ** → **stereo width** (0-200%) → fader and pan → sends.
+- Sends: each send has its own **PRE / POST** switch.
+- Meters show peak (light) and RMS (solid). The **clip light** stays lit until you click it (or right-click the strip header → Reset clip light).
+- **Channel EQ** (click the little curve on any strip, or the Channel EQ button):
+  - HPF and LPF: 12 / 24 / 48 dB per octave.
+  - LF and HF: shelf or bell. LMF and HMF: bell with Q 0.1-10.
+  - Band colours: LF purple, LMF green, HMF orange, HF light blue, HPF red, LPF yellow.
+  - The graph has a log frequency axis (20 Hz-20 kHz) and ±24 dB gain.
+  - Drag a node to set frequency and gain (dragging a node that's off turns it on). The mouse wheel sets Q (with Shift, gain). Double-click resets a band. Right-click for on/off, shelf/bell and slope.
+  - Spectrum analyzer behind the curve: post-EQ, pre-EQ or both, with an average and a peak-hold line.
+  - The 6-Band EQ and Filter insert effects draw their curves on the same graph (dashed). The amber line is the total response.
+  - Bypass buttons for the inserts, EQ and filters (bypass doesn't mute).
+  - Every EQ, trim and width control can be MIDI-learned, assigned to a macro or automated.
+- I/O view: audio-track inputs (hardware stereo/mono, or internal resampling sources), input gain, noise gate, arm/monitor, and outputs to any hardware pair.
+
+### Importing audio
+
+- Drop files from Explorer or Finder (desktop, external drives, network and cloud folders all work).
+  - Several files dropped on the Song timeline become **one track per file**, named after the file and lined up sample-accurately from bar 1.
+  - **Broadcast WAV** stems keep their timestamps relative to each other: the earliest one lands on bar 1 and the rest keep their exact distance.
+  - Imports run in the background with a progress window. WAV and AIFF stems stream from disk, so large sessions don't fill the memory. Up to 256 audio tracks.
+- Formats:
+  - Everywhere: WAV / BWF, AIFF, FLAC, OGG Vorbis, MP3.
+  - macOS also reads CAF, M4A and AAC, plus the soundtrack of MP4, MOV and M4V videos.
+  - Windows also reads M4A, AAC and WMA (through Media Foundation), plus the soundtrack of MP4, MOV, MKV and AVI videos.
+- A video's soundtrack is saved as a WAV in `Recordings/Extracted` and goes on a new track. The video itself isn't touched.
+- Files at any sample rate play at the right speed and pitch. They're converted on the fly and the originals are never changed.
+
+### Resampling
+
+- Right-click a mixer strip header or a song track → **Resample**:
+  - **Bounce to a new audio track**: renders the channel as you hear it (inserts, EQ, fader, automation) and mutes the source.
+  - **Bounce with sends printed**: same, plus the AUX returns it feeds.
+  - **Bounce and remove this track**: for audio tracks.
+  - **Freeze / Unfreeze**: for banks (including plugin instruments), audio tracks and AUX returns. Freeze renders the channel and hands its fader and sends to the frozen track. The original stops using CPU until you unfreeze.
+- **Live resampling**: an audio track (or the sample recorder) can record the main out, any bank, AUX return, other audio track, or any pad / instrument output in real time.
+- Right-click an **audio clip** in the song for: Convert to sample, Convert to sampler instrument (keys mode), Slice to pads, Slice to pads + MIDI pattern, and Export as WAV.
 
 ### Built-in effects
 
@@ -105,7 +139,7 @@ Settings → Plugins → **Scan for plugins**. Each plugin is loaded in a separa
 
 ### Files
 
-Sessions (`.crsession`), bank presets (`.crbank`, with their samples), packs (`.crpack`), MIDI import (note-number or General MIDI drum mapping) and MIDI export.
+Sessions (`.crsession`), bank presets (`.crbank`, with their samples), packs (`.crpack`), and MIDI export. MIDI import handles Type 1 files (each track goes to its own pad) and Type 0 files (each channel goes to its own pad), with note-number or General MIDI drum mapping. It also picks up the file's tempo.
 
 Audio export covers the main mix or stems (one file per track), song / loop / custom range, 16/24/32-bit float or 12-bit vintage, normalize, and effect tails. Edited samples are saved with the session.
 

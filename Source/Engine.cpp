@@ -38,6 +38,8 @@ Engine::Engine (bool openDevices)
     for (auto& v : voices) { v.winL.resize (8192); v.winR.resize (8192); }   // disk-streaming windows
     events.reserve (8192);
     for (int i = 0; i < (int) activeInputToHardware.size(); ++i) activeInputToHardware[(size_t) i] = i;
+    clipStreamL.assign (65536, 0.0f);
+    clipStreamR.assign (65536, 0.0f);
     liveQueue.reserve (1024);
     liveScratch.reserve (1024);
     midiQueue.reserve (1024);
@@ -101,6 +103,9 @@ void Engine::resetAudioTrack (cr::AudioTrack& tr, int t)
     tr.strip.mute = tr.strip.solo = false;
     for (int a = 0; a < cr::numAux; ++a) { tr.strip.send[a] = 0.0f; tr.strip.sendPre[a] = false; }
     tr.strip.output = 0;
+    tr.strip.eq = {};
+    tr.strip.frozen = false;
+    tr.frozenFrom = -1;
     tr.inputSource = 0; tr.inputPair = 0; tr.inputMono = false; tr.inputGainDb = 0.0f;
     tr.gate = false; tr.gateThresholdDb = -50.0f;
     tr.armed = tr.monitor = false;
@@ -146,6 +151,7 @@ void Engine::initialiseBank (int b)
         for (int a = 0; a < cr::numAux; ++a) { pad.channel.send[a] = 0.0f; pad.channel.sendPre[a] = false; }
         pad.channel.inserts.clear();
         pad.channel.output = 0;
+        pad.channel.eq = {};
     }
     bank.patterns.assign (1, cr::Pattern());
     bank.patterns[0].name = "Pattern 1";
@@ -163,6 +169,8 @@ void Engine::initialiseBank (int b)
     bank.strip.mute = bank.strip.solo = false;
     for (int a = 0; a < cr::numAux; ++a) { bank.strip.send[a] = 0.0f; bank.strip.sendPre[a] = false; }
     bank.strip.output = 0;
+    bank.strip.eq = {};
+    bank.strip.frozen = false;
     bank.recordArm = true;
 }
 
@@ -1128,6 +1136,7 @@ void Engine::renderChunk (const float* const* in, int numIn, float* const* out, 
         const int key = instrumentPads[i];
         auto& pad = sess.banks[(size_t) (key / cr::numPads)].pads[(size_t) (key % cr::numPads)];
         if (! pad.instrument) continue;
+        if (pad.channel.frozen || sess.banks[(size_t) (key / cr::numPads)].strip.frozen) continue;
         auto& inst = *pad.instrument;
         const int chans = juce::jmax (2, juce::jmax (inst.getTotalNumInputChannels(), inst.getTotalNumOutputChannels()));
         if (chans > pluginBuffer.getNumChannels()) continue;
@@ -1172,9 +1181,10 @@ void Engine::renderChunk (const float* const* in, int numIn, float* const* out, 
         const int b = bus.key / cr::numPads, p = bus.key % cr::numPads;
         auto& pad = sess.banks[(size_t) b].pads[(size_t) p];
         auto& ch = pad.channel;
+        if (ch.frozen) { ch.meterL = ch.meterL * 0.9f; ch.meterR = ch.meterR * 0.9f; continue; }
         const bool audible = ! ch.mute && (! bankHasPadSolo[(size_t) b] || ch.solo)
                              && (exportSoloKey < 0 || exportSoloKey == b || exportSoloKey == 10000 + bus.key);
-        processChain (ch.inserts, bus.buffer, n);
+        processChannel (ch, bus.buffer, n);
         if (! bankActive[(size_t) b]) { bankBuffers[(size_t) b].clear (0, n); bankActive[(size_t) b] = true; }
         mixStripTo (ch, bus.buffer, n, audible, -1, bankBuffers[(size_t) b]);
     }
@@ -1183,6 +1193,7 @@ void Engine::renderChunk (const float* const* in, int numIn, float* const* out, 
     {
         auto& bank = sess.banks[(size_t) b];
         if (! bank.created) continue;
+        if (bank.strip.frozen) { bank.strip.meterL = bank.strip.meterL * 0.9f; bank.strip.meterR = bank.strip.meterR * 0.9f; bankActive[(size_t) b] = false; continue; }
         if (bankActive[(size_t) b]) bankTail[(size_t) b] = (int) (sampleRate * 4.0);
         const bool hasFx = ! bank.strip.inserts.empty();
         if (! bankActive[(size_t) b])
@@ -1193,7 +1204,7 @@ void Engine::renderChunk (const float* const* in, int numIn, float* const* out, 
         }
         bankTail[(size_t) b] -= n;
         auto& buf = bankBuffers[(size_t) b];
-        processChain (bank.strip.inserts, buf, n);
+        processChannel (bank.strip, buf, n);
         const bool audible = ! bank.strip.mute && (! anySolo || bank.strip.solo)
                              && (exportSoloKey < 0 || exportSoloKey == b || (exportSoloKey >= 10000 && (exportSoloKey - 10000) / cr::numPads == b));
         mixStripTo (bank.strip, buf, n, audible, b, masterBuffer);
@@ -1207,8 +1218,9 @@ void Engine::renderChunk (const float* const* in, int numIn, float* const* out, 
     {
         auto& aux = sess.aux[(size_t) a];
         auto& buf = auxBuffers[(size_t) a];
-        processChain (aux.inserts, buf, n);
-        const bool audible = ! aux.mute && (! anySolo || aux.solo) && (exportSoloKey < 0 || exportSoloKey == 2000 + a);
+        if (aux.frozen) { aux.meterL = aux.meterL * 0.9f; aux.meterR = aux.meterR * 0.9f; continue; }
+        processChannel (aux, buf, n);
+        const bool audible = ! aux.mute && (! anySolo || aux.solo) && (exportSoloKey < 0 || exportSoloKey == 2000 + a || exportIncludeReturns);
         applyPanVolume (buf, n, aux.volume, aux.pan);
         meter (aux, buf, n);
         if (! audible) continue;
@@ -1217,8 +1229,11 @@ void Engine::renderChunk (const float* const* in, int numIn, float* const* out, 
     }
 
     // master
-    processChain (sess.master.inserts, masterBuffer, n);
-    applyPanVolume (masterBuffer, n, sess.master.mute ? 0.0f : sess.master.volume, sess.master.pan);
+    if (! (offlineRender && exportBypassMaster))
+    {
+        processChannel (sess.master, masterBuffer, n);
+        applyPanVolume (masterBuffer, n, sess.master.mute ? 0.0f : sess.master.volume, sess.master.pan);
+    }
     meter (sess.master, masterBuffer, n);
 
     // sampling onto pads (after the mix so internal sources can be resampled)
@@ -1353,10 +1368,44 @@ void Engine::renderChunk (const float* const* in, int numIn, float* const* out, 
 
 void Engine::meter (cr::Strip& st, const juce::AudioBuffer<float>& b, int n)
 {
-    const float l = b.getMagnitude (0, 0, n), r = b.getMagnitude (juce::jmin (1, b.getNumChannels() - 1), 0, n);
+    const int rc = juce::jmin (1, b.getNumChannels() - 1);
+    const float l = b.getMagnitude (0, 0, n), r = b.getMagnitude (rc, 0, n);
     st.meterL = juce::jmax (l, st.meterL.load() * 0.94f);
     st.meterR = juce::jmax (r, st.meterR.load() * 0.94f);
     st.peakHold = juce::jmax (st.peakHold.load(), juce::jmax (l, r));
+    // RMS with ~300 ms integration
+    const float k = 1.0f - std::exp (-(float) n / (float) (0.3 * sampleRate));
+    const float ml = b.getRMSLevel (0, 0, n), mr = b.getRMSLevel (rc, 0, n);
+    st.rmsL = st.rmsL.load() + (ml - st.rmsL.load()) * k;
+    st.rmsR = st.rmsR.load() + (mr - st.rmsR.load()) * k;
+    if (l >= 0.999f || r >= 0.999f) st.clipped = true;
+}
+
+// Channel strip front end: trim + phase -> inserts -> HPF / LPF + EQ -> stereo width.
+// Volume, pan and sends follow in mixStripTo.
+void Engine::processChannel (cr::Strip& st, juce::AudioBuffer<float>& buf, int n)
+{
+    const auto& s = st.eq;
+    const float trim = (s.invert ? -1.0f : 1.0f) * dbToGain (s.trimDb);
+    if (trim != 1.0f) for (int c = 0; c < 2; ++c) buf.applyGain (c, 0, n, trim);
+    if (! s.bypassInserts) processChain (st.inserts, buf, n);
+    const bool tap = analyzerStrip.load() == &st;
+    if (tap) analyzerPre.push (buf, n);
+    if ((! s.bypassEq && s.anyBandOn()) || (! s.bypassFilters && s.anyFilterOn()))
+        st.eqDsp.process (s, buf, n, sampleRate);
+    if (s.width != 1.0f && buf.getNumChannels() > 1)
+    {
+        auto* l = buf.getWritePointer (0);
+        auto* r = buf.getWritePointer (1);
+        const float w = juce::jlimit (0.0f, 2.0f, s.width);
+        for (int i = 0; i < n; ++i)
+        {
+            const float m = 0.5f * (l[i] + r[i]), sd = 0.5f * (l[i] - r[i]) * w;
+            l[i] = m + sd;
+            r[i] = m - sd;
+        }
+    }
+    if (tap) analyzerPost.push (buf, n);
 }
 
 // Volume / pan / sends of a strip; adds the result to 'dest' (or a hardware output).
@@ -1471,6 +1520,7 @@ void Engine::renderAudioTracks (const float* const* in, int numIn, int n)
             for (int c = 0; c < 2; ++c) scratchBuffer.copyFrom (c, 0, bankBuffers[(size_t) (tr.inputSource - 2)], c, 0, n);
         else if (tr.inputSource >= 200 && tr.inputSource < 200 + cr::numAux)
             for (int c = 0; c < 2; ++c) scratchBuffer.copyFrom (c, 0, auxBuffers[(size_t) (tr.inputSource - 200)], c, 0, n);
+        else if (! copyInternalSource (tr.inputSource, n, t)) {}
         scratchBuffer.applyGain (0, n, dbToGain (tr.inputGainDb));
 
         if (tr.gate)
@@ -1510,33 +1560,59 @@ void Engine::renderAudioTracks (const float* const* in, int numIn, int n)
                 const double framesPerTick = 1.0 / curTps;
                 for (auto& clip : tr.clips)
                 {
-                    if (! clip.sample || clip.sample->isStreamed()) continue;
-                    const auto& sb = clip.sample->buffer;
-                    const double ratio = clip.sample->sampleRate / sampleRate;
+                    if (! clip.sample) continue;
+                    const auto& smp = *clip.sample;
+                    const double ratio = smp.sampleRate / sampleRate;
                     const double clipStartFrame = clip.start * framesPerTick;
                     const double segStartFrame = sg.tick * framesPerTick;
                     const double clipEndFrame = clipStartFrame + clip.length / ratio;
                     if (segStartFrame + sg.count <= clipStartFrame || segStartFrame >= clipEndFrame) continue;
                     const float g = dbToGain (clip.gainDb);
-                    for (int i = 0; i < sg.count; ++i)
+
+                    // source frames needed for this segment
+                    const int iFirst = juce::jmax (0, (int) std::ceil (clipStartFrame - segStartFrame));
+                    const int iLast = juce::jmin (sg.count, (int) std::ceil (clipEndFrame - segStartFrame));
+                    if (iLast <= iFirst) continue;
+                    const float* srcL = nullptr;
+                    const float* srcR = nullptr;
+                    juce::int64 base = 0, avail = 0;
+                    if (smp.isStreamed())
                     {
-                        const double rel = segStartFrame + i - clipStartFrame;
-                        if (rel < 0 || rel >= clip.length / ratio) continue;
-                        const double srcPos = clip.offset + rel * ratio;
-                        const int i0 = (int) srcPos;
-                        if (i0 + 1 >= sb.getNumSamples()) continue;
-                        const float frac = (float) (srcPos - i0);
-                        for (int c = 0; c < 2; ++c)
-                        {
-                            const float* d = sb.getReadPointer (juce::jmin (c, sb.getNumChannels() - 1));
-                            buf.addSample (c, sg.offset + i, (d[i0] + frac * (d[i0 + 1] - d[i0])) * g);
-                        }
+                        // disk-streamed (memory-mapped) stem: pull just the frames this block needs
+                        const double p0 = clip.offset + (segStartFrame + iFirst - clipStartFrame) * ratio;
+                        const double p1 = clip.offset + (segStartFrame + iLast - 1 - clipStartFrame) * ratio;
+                        base = juce::jmax ((juce::int64) 0, (juce::int64) p0);
+                        const int count = (int) juce::jmin ((juce::int64) clipStreamL.size(), juce::jmin (smp.numFrames, (juce::int64) p1 + 2) - base);
+                        if (count <= 0) continue;
+                        float* chans[2] = { clipStreamL.data(), clipStreamR.data() };
+                        smp.mapped->read (chans, 2, base, count);
+                        if (smp.mapped->numChannels == 1) std::copy (clipStreamL.begin(), clipStreamL.begin() + count, clipStreamR.begin());
+                        srcL = clipStreamL.data(); srcR = clipStreamR.data(); avail = count;
+                    }
+                    else
+                    {
+                        const auto& sb = smp.buffer;
+                        srcL = sb.getReadPointer (0);
+                        srcR = sb.getReadPointer (juce::jmin (1, sb.getNumChannels() - 1));
+                        avail = sb.getNumSamples();
+                    }
+                    auto* outL = buf.getWritePointer (0, sg.offset);
+                    auto* outR = buf.getWritePointer (1, sg.offset);
+                    for (int i = iFirst; i < iLast; ++i)
+                    {
+                        const double srcPos = clip.offset + (segStartFrame + i - clipStartFrame) * ratio;
+                        const juce::int64 i0 = (juce::int64) srcPos - base;
+                        if (i0 < 0 || i0 + 1 >= avail) continue;
+                        const float frac = (float) (srcPos - std::floor (srcPos));
+                        outL[i] += (srcL[i0] + frac * (srcL[i0 + 1] - srcL[i0])) * g;
+                        outR[i] += (srcR[i0] + frac * (srcR[i0 + 1] - srcR[i0])) * g;
                     }
                 }
             }
         }
 
-        processChain (tr.strip.inserts, buf, n);
+        if (tr.strip.frozen) { tr.strip.meterL = tr.strip.meterL * 0.9f; tr.strip.meterR = tr.strip.meterR * 0.9f; buf.clear (0, n); continue; }
+        processChannel (tr.strip, buf, n);
         const bool audible = ! tr.strip.mute && (! anySolo || tr.strip.solo) && (exportSoloKey < 0 || exportSoloKey == 1000 + t);
         mixStripTo (tr.strip, buf, n, audible, 1000 + t, masterBuffer);
     }
@@ -1648,6 +1724,7 @@ void Engine::captureSampling (const float* const* in, int numIn, int n)
     }
     else if (rs.source >= 200 && rs.source < 200 + cr::numAux)
         for (int c = 0; c < 2; ++c) scratchBuffer.copyFrom (c, 0, auxBuffers[(size_t) (rs.source - 200)], c, 0, n);
+    else copyInternalSource (rs.source, n, -1);
     level = juce::jmax (scratchBuffer.getMagnitude (0, 0, n), scratchBuffer.getMagnitude (1, 0, n));
     inputLevel = juce::jmax (level, inputLevel.load() * 0.9f);
 

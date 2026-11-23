@@ -226,6 +226,17 @@ cr::Layer* currentLayer();
 juce::String layerPath (int bank, int pad, int layer, int field);
 juce::String stripPath (int stripKey);   // "bank/3/", "pad/3/5/", "aux/0/", "audio/2/", "master/"
 bool isAudioFile (const juce::File& f);
+// Drops / imports audio as new tracks, one per file, in the background (stems keep their
+// Broadcast WAV positions relative to each other; otherwise they all start at originTick).
+void importStems (const juce::StringArray& files, int originTick);
+
+// Resample submenu for a channel (bounce / bounce with sends / freeze / unfreeze); ids 901-905.
+void addResampleItems (juce::PopupMenu& m, int stripKey);
+bool handleResampleItem (int menuResult, int stripKey);
+// Live resampling sources for input menus: audio tracks (ids 1000+) and pads of the selected bank (ids 20000+).
+void addLiveSourceItems (juce::PopupMenu& internal, int currentSource, int excludeTrack);
+int liveSourceForMenuResult (int menuResult);   // -1 when it isn't one of those
+juce::String liveSourceName (int source);
 void showError (const juce::String& title, const juce::String& message);
 void askForText (const juce::String& title, const juce::String& initial, std::function<void (const juce::String&)> done);
 void askForNumber (const juce::String& title, double initial, std::function<void (double)> done);
