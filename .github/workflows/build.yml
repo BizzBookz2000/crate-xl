@@ -1,0 +1,73 @@
+# Builds Crate XL in the cloud on every push: Android APK, Windows app, macOS app.
+# The results are attached to each run under "Artifacts".
+name: Build Crate XL
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Get JUCE
+        run: git clone --depth 1 --branch 9.0.4 https://github.com/juce-framework/JUCE.git JUCE
+      - name: Build APK
+        working-directory: Builds/Android
+        run: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          cp Builds/Android/app/build/outputs/apk/debug/*.apk "dist/Crate XL.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Crate-XL-Android
+          path: dist/Crate XL.apk
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Collect
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Get-ChildItem build/Crate_artefacts/Release -Filter *.exe | Sort-Object LastWriteTime | Select-Object -Last 1 | Copy-Item -Destination "dist/Crate XL.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Crate-XL-Windows
+          path: dist/Crate XL.exe
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Collect
+        run: |
+          mkdir -p dist
+          APP=$(ls -td build/Crate_artefacts/Release/*.app | head -n 1)
+          codesign --force --deep -s - "$APP"
+          ditto -c -k --keepParent "$APP" "dist/Crate XL-mac.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Crate-XL-macOS
+          path: dist/Crate XL-mac.zip
