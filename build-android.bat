@@ -21,6 +21,11 @@ if "%ANDROID_HOME%"=="" (
 )
 if "%JAVA_HOME%"=="" if exist "%ProgramFiles%\Android\Android Studio\jbr" set "JAVA_HOME=%ProgramFiles%\Android\Android Studio\jbr"
 
+if not exist "%USERPROFILE%\.android\debug.keystore" (
+    if not exist "%USERPROFILE%\.android" mkdir "%USERPROFILE%\.android"
+    "%JAVA_HOME%\bin\keytool.exe" -genkeypair -keystore "%USERPROFILE%\.android\debug.keystore" -storetype JKS -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+)
+
 cd Builds\Android
 set "SDKDIR=%ANDROID_HOME:\=\\%"
 > local.properties echo sdk.dir=%SDKDIR%

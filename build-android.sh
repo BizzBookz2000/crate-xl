@@ -31,6 +31,14 @@ if [ -z "$JAVA_HOME" ]; then
     done
 fi
 
+# Debug signing key (Android Studio normally makes this on first run)
+if [ ! -f "$HOME/.android/debug.keystore" ]; then
+    mkdir -p "$HOME/.android"
+    KT=keytool; [ -n "$JAVA_HOME" ] && KT="$JAVA_HOME/bin/keytool"
+    "$KT" -genkeypair -keystore "$HOME/.android/debug.keystore" -storetype JKS -storepass android -keypass android \
+        -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+fi
+
 cd Builds/Android
 echo "sdk.dir=$ANDROID_HOME" > local.properties
 chmod +x gradlew
