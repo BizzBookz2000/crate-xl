@@ -67,7 +67,7 @@ You can also pass `-DCRATE_APP_NAME="My Name"` when configuring. The build scrip
   - Filters: low-pass 12/24, high-pass 12/24, band-pass, notch.
 - **Slicing**: slice mode (click the ruler to add slices, drag to move, right-click to remove). Auto-slice by equal parts, by beat grid or by transients. Save slices to pads (with choke group and an auto-generated pattern), to one layer across keys, to multiple layers, or to files.
 - **Audio Editor**: select, cut, copy, paste, delete, trim, normalize, gain, fade in/out, reverse, silence, remove DC, time-stretch, pitch-shift, stretch to tempo, set start/end and loop from the selection, and undo.
-- **Recorder**: sample from any input pair or mono input, or resample the main output, a bank or an AUX. Threshold start, and "move to next pad" for quick multi-sampling.
+- **Recorder**: pick the input device (CoreAudio / WASAPI / DirectSound; with ASIO the input follows the driver), then sample from any stereo pair or mono channel by its real name, or resample the main output, a bank or an AUX. Threshold start, and "move to next pad" for quick multi-sampling.
 - **Layer FX**: four effects per layer.
 - **Modulations**: a modulation matrix with two LFOs (six shapes, Hz or tempo-synced, mono or poly), a mod envelope, a 32-step modulator, velocity, key track, wheels, aftertouch, random and the 16 macros. Destinations are pitch, cutoff, resonance, volume, pan, sample start, saturation and LFO rates.
 - **Mapping**: key × velocity zone map with drag-to-edit, root key learn and spread keys.
@@ -89,6 +89,10 @@ You can also pass `-DCRATE_APP_NAME="My Name"` when configuring. The build scrip
 ### Built-in effects
 
 6-band EQ, Compressor (compress / limit / expand), Delay, Stereo Delay, Reverb, Chorus / Flanger (with vibrato), Overdrive, Bit Crusher, Filter, Auto-Pan, Stereo Widener, Slicer and Noise Gate.
+
+### Plugin scanning
+
+Settings → Plugins → **Scan for plugins**. Each plugin is loaded in a separate helper process (the app starts a copy of itself in the background). If a plugin crashes or stops responding for 90 seconds, it's marked **Failed** with the reason, and the scan moves on to the next one. The app itself never goes down. You can stop a scan part-way, and **Retry failed plugins** clears the failed list so the next scan tries them again.
 
 ### MIDI
 

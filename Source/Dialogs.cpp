@@ -17,6 +17,15 @@ public:
         source.getText = [] { return sourceName(); };
         source.onClick = [this] { sourceMenu(); };
         addAndMakeVisible (source);
+        device.getText = []
+        {
+            auto& en = Engine::get();
+            auto n = en.getInputDeviceName();
+            return n.isEmpty() ? juce::String ("No input device") : n;
+        };
+        device.onClick = [this] { deviceMenu(); };
+        addAndMakeVisible (device);
+        if (e.recorder.source == 0) enableSelectedInput();
         bankStep.getText = [] { return cr::bankName (Engine::get().recorder.destBank); };
         bankStep.onStep = [] (int d) { auto& r = Engine::get().recorder; r.destBank = juce::jlimit (0, cr::numBanks - 1, r.destBank + d); };
         padStep.getText = [] { return "Pad " + juce::String (Engine::get().recorder.destPad + 1); };
@@ -51,7 +60,7 @@ public:
             if (auto* w = findParentComponentOfClass<juce::DialogWindow>()) w->exitModalState (0);
         };
         addAndMakeVisible (closeBtn);
-        setSize (520, 380);
+        setSize (560, 450);
         startTimerHz (30);
     }
 
@@ -61,7 +70,16 @@ public:
     {
         auto& e = Engine::get();
         const auto& r = e.recorder;
-        if (r.source == 0) return r.mono ? "Input " + juce::String (r.inputPair + 1) : e.getInputPairNames()[r.inputPair];
+        if (r.source == 0)
+        {
+            if (r.mono)
+            {
+                const auto ch = e.getInputChannelNames();
+                return "Mono: " + (juce::isPositiveAndBelow (r.inputPair, ch.size()) ? ch[r.inputPair] : "Input " + juce::String (r.inputPair + 1));
+            }
+            const auto pairs = e.getInputPairNames();
+            return "Stereo: " + (juce::isPositiveAndBelow (r.inputPair, pairs.size()) ? pairs[r.inputPair] : "Inputs " + juce::String (r.inputPair * 2 + 1) + " + " + juce::String (r.inputPair * 2 + 2));
+        }
         if (r.source == 1) return "Main out (resample)";
         if (r.source >= 2 && r.source < 2 + cr::numBanks) return e.session().banks[(size_t) (r.source - 2)].name;
         return e.session().aux[(size_t) juce::jlimit (0, cr::numAux - 1, r.source - 200)].name;
@@ -75,6 +93,12 @@ public:
         g.setColour (Pal::text);
         g.setFont (Fonts::ui (16.0f, true));
         g.drawText ("Sample recorder", r.removeFromTop (26), juce::Justification::centredLeft);
+        if (inputError.isNotEmpty())
+        {
+            g.setColour (Pal::rec);
+            g.setFont (Fonts::ui (12.0f));
+            g.drawFittedText (inputError, errorArea, juce::Justification::centredLeft, 2);
+        }
         // level meter
         auto meter = meterArea.toFloat();
         g.setColour (Pal::bg);
@@ -101,6 +125,8 @@ public:
     {
         auto r = getLocalBounds().reduced (20, 16);
         r.removeFromTop (34);
+        device.setBounds (r.removeFromTop (48).reduced (0, 2));
+        r.removeFromTop (4);
         auto row = r.removeFromTop (48);
         source.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (0, 2));
         bankStep.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (4, 2));
@@ -114,6 +140,7 @@ public:
         nextPad.setBounds (t.removeFromTop (30));
         r.removeFromTop (8);
         statusArea = r.removeFromTop (24);
+        errorArea = r.removeFromTop (34);
         auto b = r.removeFromBottom (44);
         closeBtn.setBounds (b.removeFromRight (100).reduced (0, 4));
         b.removeFromRight (10);
@@ -128,7 +155,8 @@ private:
         juce::PopupMenu m, hw, mono, internal;
         const auto pairs = e.getInputPairNames();
         for (int i = 0; i < pairs.size(); ++i) hw.addItem (1 + i, pairs[i], true, rs.source == 0 && ! rs.mono && rs.inputPair == i);
-        for (int i = 0; i < pairs.size() * 2; ++i) mono.addItem (100 + i, "Input " + juce::String (i + 1), true, rs.source == 0 && rs.mono && rs.inputPair == i);
+        const auto chans = e.getInputChannelNames();
+        for (int i = 0; i < chans.size(); ++i) mono.addItem (100 + i, chans[i], true, rs.source == 0 && rs.mono && rs.inputPair == i);
         internal.addItem (300, "Main out (resample)", true, rs.source == 1);
         for (int b = 0; b < cr::numBanks; ++b) if (e.session().banks[(size_t) b].created) internal.addItem (400 + b, e.session().banks[(size_t) b].name, true, rs.source == 2 + b);
         for (int a = 0; a < e.session().auxCount; ++a) internal.addItem (600 + a, e.session().aux[(size_t) a].name, true, rs.source == 200 + a);
@@ -143,8 +171,45 @@ private:
             else if (r == 300) rr.source = 1;
             else if (r >= 100) { rr.source = 0; rr.mono = true; rr.inputPair = r - 100; }
             else if (r >= 1) { rr.source = 0; rr.mono = false; rr.inputPair = r - 1; }
+            if (r > 0 && r < 300) enableSelectedInput();
+            else if (r > 0) inputError.clear();
             source.repaint();
+            repaint();
         });
+    }
+
+    void deviceMenu()
+    {
+        auto& e = Engine::get();
+        juce::PopupMenu m;
+        const auto names = e.getInputDeviceNames();
+        const auto current = e.getInputDeviceName();
+        const bool canChoose = e.canChooseInputDevice();
+        if (! canChoose) m.addSectionHeader ("This driver uses one device for inputs and outputs");
+        for (int i = 0; i < names.size(); ++i) m.addItem (1 + i, names[i], canChoose, names[i] == current);
+        if (names.isEmpty()) m.addItem (-1, "No input devices found", false, false);
+        m.addSeparator();
+        m.addItem (1000, "Audio settings (driver, sample rate, channels)...");
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&device), [this, names] (int r)
+        {
+            if (r == 1000) { showSettingsDialog (0); return; }
+            if (r < 1 || r > names.size()) return;
+            auto& en = Engine::get();
+            inputError = en.setInputDevice (names[r - 1]);
+            if (inputError.isEmpty() && en.recorder.source == 0) enableSelectedInput();
+            device.repaint();
+            source.repaint();
+            repaint();
+        });
+    }
+
+    // The device only opens the input channels it's asked for, so switch on the chosen ones.
+    void enableSelectedInput()
+    {
+        auto& rs = Engine::get().recorder;
+        const int first = rs.mono ? rs.inputPair : rs.inputPair * 2;
+        const int num = rs.mono ? 1 : juce::jmin (2, Engine::get().getInputChannelNames().size() - first);
+        inputError = Engine::get().requireInputChannels (first, juce::jmax (1, num));
     }
 
     void update()
@@ -163,7 +228,9 @@ private:
         update();
     }
 
-    ChoiceField source { "Source" };
+    ChoiceField source { "Input" }, device { "Input device" };
+    juce::String inputError;
+    juce::Rectangle<int> errorArea;
     Stepper bankStep { "Bank" }, padStep { "Pad" };
     juce::ToggleButton nextPad, threshold;
     Knob thrKnob { "Threshold" };

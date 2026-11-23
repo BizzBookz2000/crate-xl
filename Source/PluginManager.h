@@ -11,9 +11,24 @@ public:
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownPlugins;
 
-    // Scans the default VST3 folders plus any extra folders on a background thread.
+    // Scans the default plugin folders plus any extra folders on a background thread.
+    // Each plugin is loaded in a separate helper process (this app started with
+    // --crate-scan-plugin), so a plugin that crashes or hangs is marked as failed and
+    // the scan carries on with the next one.
     void startScan (std::function<void (juce::String status, bool finished)> progress);
+    void stopScan() { signalThreadShouldExit(); }
     bool isScanning() const { return isThreadRunning(); }
+    float getScanProgress() const { return scanProgress.load(); }
+
+    struct FailedPlugin { juce::String format, fileOrId, name, reason; };
+    std::vector<FailedPlugin> getFailedPlugins() const;
+    // Clears the failed list and the blacklist so the next scan tries those plugins again.
+    void clearFailedPlugins();
+
+    // Entry point for the helper process. Returns true (and sets exitCode) when the
+    // command line asks for a single-plugin scan.
+    static bool isScannerCommandLine (const juce::StringArray& args);
+    static int runScannerProcess (const juce::StringArray& args);
 
     juce::Array<juce::PluginDescription> getInstruments() const;
     juce::Array<juce::PluginDescription> getEffects() const;
@@ -28,7 +43,16 @@ public:
 private:
     void run() override;
     void saveList();
+    void saveFailed();
     juce::File getDataFile (const juce::String& name) const;
+    void addFailed (const juce::String& format, const juce::String& id, const juce::String& reason);
+
+    class OutOfProcessScanner;
+    friend class OutOfProcessScanner;
+
+    mutable juce::CriticalSection failedLock;
+    std::vector<FailedPlugin> failed;
+    std::atomic<float> scanProgress { 0.0f };
 
     std::function<void (juce::String, bool)> progressCallback;
     juce::StringArray extraFolders;

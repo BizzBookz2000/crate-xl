@@ -86,8 +86,17 @@ void pumpMessages (int ms)
 }
 } // namespace
 
-int main()
+int main (int argc, char** argv)
 {
+    {
+        juce::StringArray args;
+        for (int i = 1; i < argc; ++i) args.add (argv[i]);
+        if (PluginManager::isScannerCommandLine (args))
+        {
+            juce::ScopedJuceInitialiser_GUI init;
+            return PluginManager::runScannerProcess (args);
+        }
+    }
     juce::ScopedJuceInitialiser_GUI juceInit;
     tempDir().deleteRecursively();
     tempDir().createDirectory();
@@ -453,6 +462,28 @@ int main()
         o.stems = true;
         check (e.exportAudio (tempDir().getChildFile ("stems.wav"), o, err), "export stems");
         check (tempDir().getChildFile ("stems - Drums.wav").existsAsFile(), "stem file per track");
+    }
+
+    // ---- plugin scan survives plugins that crash or hang ----
+    if (auto dir = juce::SystemStats::getEnvironmentVariable ("CRATE_TEST_PLUGIN_DIR", {}); dir.isNotEmpty())
+    {
+        PluginManager pm;
+        pm.clearFailedPlugins();
+        pm.addSearchFolder (juce::File (dir));
+        pm.startScan ({});
+        for (int i = 0; i < 2000 && pm.isScanning(); ++i) juce::Thread::sleep (100);
+        check (! pm.isScanning(), "plugin scan finished");
+        const auto failed = pm.getFailedPlugins();
+        bool crash = false, hang = false;
+        for (auto& f : failed)
+        {
+            std::cout << "  failed: " << f.name << " - " << f.reason << std::endl;
+            if (f.fileOrId.contains ("Crasher")) crash = true;
+            if (f.fileOrId.contains ("Hanger")) hang = true;
+        }
+        check (crash, "crashing plugin marked failed, scan carried on");
+        check (hang, "hanging plugin marked failed, scan carried on");
+        pm.clearFailedPlugins();
     }
 
     std::cout << std::endl << (checks - failures) << " / " << checks << " checks passed" << std::endl;

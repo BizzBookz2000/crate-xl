@@ -37,6 +37,7 @@ Engine::Engine (bool openDevices)
     voices.resize (maxVoices);
     for (auto& v : voices) { v.winL.resize (8192); v.winR.resize (8192); }   // disk-streaming windows
     events.reserve (8192);
+    for (int i = 0; i < (int) activeInputToHardware.size(); ++i) activeInputToHardware[(size_t) i] = i;
     liveQueue.reserve (1024);
     liveScratch.reserve (1024);
     midiQueue.reserve (1024);
@@ -815,6 +816,13 @@ int Engine::findTrackPatternOnSong (int bank) const
 // ============================================================================
 void Engine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
+    // The callback only gets the input channels that are switched on, packed together.
+    // Remember which hardware channel each one is, so input choices mean the real channel.
+    for (int i = 0; i < (int) activeInputToHardware.size(); ++i) activeInputToHardware[(size_t) i] = 99;
+    const auto active = device->getActiveInputChannels();
+    int k = 0;
+    for (int ch = 0; ch < 32 && k < (int) activeInputToHardware.size(); ++ch)
+        if (active[ch]) activeInputToHardware[(size_t) k++] = ch;
     prepare (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples());
 }
 
@@ -970,8 +978,13 @@ void Engine::renderBlock (const float* const* in, int numIn, float* const* out, 
         const int n = juce::jmin (maxBlock, numSamples - done);
         const float* inPtrs[32] {};
         float* outPtrs[32] {};
-        const int ni = juce::jmin (32, numIn), no = juce::jmin (32, numOut);
-        for (int c = 0; c < ni; ++c) inPtrs[c] = in[c] != nullptr ? in[c] + done : nullptr;
+        const int no = juce::jmin (32, numOut);
+        int ni = 0;   // inputs are re-spread to their hardware channel numbers
+        for (int c = 0; c < juce::jmin (32, numIn); ++c)
+        {
+            const int hw = activeInputToHardware[(size_t) c];
+            if (hw < 32 && in[c] != nullptr) { inPtrs[hw] = in[c] + done; ni = juce::jmax (ni, hw + 1); }
+        }
         for (int c = 0; c < no; ++c) outPtrs[c] = out[c] != nullptr ? out[c] + done : nullptr;
         renderChunk (inPtrs, ni, outPtrs, no, n);
         done += n;
@@ -1731,6 +1744,68 @@ juce::StringArray Engine::getInputPairNames() const
     }
     if (names.isEmpty()) names.add ("Input 1 + 2");
     return names;
+}
+
+juce::StringArray Engine::getInputChannelNames() const
+{
+    juce::StringArray names;
+    if (auto* d = const_cast<juce::AudioDeviceManager&> (deviceManager).getCurrentAudioDevice())
+        names = d->getInputChannelNames();
+    names.removeRange (32, names.size());
+    if (names.isEmpty()) names.addArray ({ "Input 1", "Input 2" });
+    return names;
+}
+
+juce::StringArray Engine::getInputDeviceNames() const
+{
+    if (auto* type = const_cast<juce::AudioDeviceManager&> (deviceManager).getCurrentDeviceTypeObject())
+        return type->getDeviceNames (true);
+    return {};
+}
+
+juce::String Engine::getInputDeviceName() const
+{
+    auto setup = deviceManager.getAudioDeviceSetup();
+    return canChooseInputDevice() ? setup.inputDeviceName : setup.outputDeviceName;
+}
+
+bool Engine::canChooseInputDevice() const
+{
+    if (auto* type = const_cast<juce::AudioDeviceManager&> (deviceManager).getCurrentDeviceTypeObject())
+        return type->hasSeparateInputsAndOutputs();
+    return false;
+}
+
+juce::String Engine::setInputDevice (const juce::String& name)
+{
+    if (! canChooseInputDevice()) return "This driver uses one device for inputs and outputs. Change it in Settings > Audio.";
+    auto setup = deviceManager.getAudioDeviceSetup();
+    if (setup.inputDeviceName == name) return {};
+    setup.inputDeviceName = name;
+    setup.useDefaultInputChannels = false;
+    setup.inputChannels.clear();
+    setup.inputChannels.setRange (0, 2, true);
+    auto err = deviceManager.setAudioDeviceSetup (setup, true);
+    recorder.inputPair = 0;
+    return err;
+}
+
+juce::String Engine::requireInputChannels (int first, int num)
+{
+    auto setup = deviceManager.getAudioDeviceSetup();
+    auto* d = deviceManager.getCurrentAudioDevice();
+    if (d == nullptr) return "No audio device is open. Choose one in Settings > Audio.";
+    const int available = d->getInputChannelNames().size();
+    auto have = d->getActiveInputChannels();
+    bool missing = false;
+    for (int c = first; c < first + num; ++c)
+        if (c >= 0 && c < juce::jmin (32, available) && ! have[c]) missing = true;
+    if (! missing) return {};
+    setup.useDefaultInputChannels = false;
+    setup.inputChannels = have;
+    for (int c = first; c < first + num; ++c)
+        if (c >= 0 && c < juce::jmin (32, available)) setup.inputChannels.setBit (c);
+    return deviceManager.setAudioDeviceSetup (setup, true);
 }
 
 juce::StringArray Engine::getOutputPairNames() const

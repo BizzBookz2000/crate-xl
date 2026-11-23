@@ -247,17 +247,22 @@ public:
     {
         scanBtn.onClick = [this]
         {
+            auto& p = Engine::get().plugins;
+            if (p.isScanning()) { p.stopScan(); status = "Stopping after the current plugin..."; repaint(); return; }
             status = "Scanning...";
             juce::Component::SafePointer<PluginsPage> safe (this);
-            Engine::get().plugins.startScan ([safe] (juce::String s, bool done)
+            p.startScan ([safe] (juce::String s, bool)
             {
-                juce::MessageManager::callAsync ([safe, s, done]
-                {
-                    if (safe == nullptr) return;
-                    safe->status = done ? "Scan finished: " + juce::String (Engine::get().plugins.knownPlugins.getNumTypes()) + " plugins" : s;
-                    safe->repaint();
-                });
+                if (safe == nullptr) return;
+                safe->status = s;
+                safe->repaint();
             });
+            repaint();
+        };
+        retryBtn.onClick = [this]
+        {
+            Engine::get().plugins.clearFailedPlugins();
+            status = "The failed list is cleared. Scan again to retry those plugins.";
             repaint();
         };
         addBtn.onClick = [this]
@@ -269,8 +274,9 @@ public:
             });
         };
         addAndMakeVisible (scanBtn);
+        addAndMakeVisible (retryBtn);
         addAndMakeVisible (addBtn);
-        startTimerHz (4);
+        startTimerHz (8);
     }
 
     void paint (juce::Graphics& g) override
@@ -279,21 +285,85 @@ public:
         auto& p = Engine::get().plugins;
         auto r = getLocalBounds().reduced (16, 14);
         r.removeFromTop (44);
+
+        // progress
+        auto bar = r.removeFromTop (6).toFloat();
+        g.setColour (Pal::bg);
+        g.fillRoundedRectangle (bar, 3.0f);
+        if (p.isScanning())
+        {
+            g.setColour (Pal::accent);
+            g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * juce::jlimit (0.02f, 1.0f, p.getScanProgress())), 3.0f);
+        }
+        r.removeFromTop (4);
         g.setColour (Pal::accent);
         g.setFont (Fonts::ui (13.0f, true));
         g.drawFittedText (status, r.removeFromTop (24), juce::Justification::centredLeft, 1);
+
         drawCaps (g, "Folders searched", r.removeFromTop (22), juce::Justification::centredLeft, Pal::textDim, 10.0f);
         g.setFont (Fonts::ui (12.0f));
         g.setColour (Pal::textDim);
         const auto path = p.getSearchPath();
-        for (int i = 0; i < path.getNumPaths(); ++i) g.drawText (path[i].getFullPathName(), r.removeFromTop (20), juce::Justification::centredLeft);
+        for (int i = 0; i < path.getNumPaths() && i < 6; ++i) g.drawText (path[i].getFullPathName(), r.removeFromTop (18), juce::Justification::centredLeft);
         r.removeFromTop (10);
-        drawCaps (g, "Found: " + juce::String (p.getInstruments().size()) + " instruments, " + juce::String (p.getEffects().size()) + " effects", r.removeFromTop (22), juce::Justification::centredLeft, Pal::textDim, 10.0f);
+
+        const auto failed = p.getFailedPlugins();
+        auto left = r.removeFromLeft (r.getWidth() * 3 / 5);
+        r.removeFromLeft (16);
+        auto right = r;
+
+        drawCaps (g, "Found: " + juce::String (p.getInstruments().size()) + " instruments, " + juce::String (p.getEffects().size()) + " effects",
+                  left.removeFromTop (22), juce::Justification::centredLeft, Pal::textDim, 10.0f);
+        g.setFont (Fonts::ui (12.0f));
         g.setColour (Pal::text);
-        for (auto& d : p.knownPlugins.getTypes())
+        const auto types = p.knownPlugins.getTypes();
+        int shown = 0;
+        for (auto& d : types)
         {
-            if (r.getHeight() < 20) break;
-            g.drawText (d.name + "   " + d.manufacturerName + "   (" + d.pluginFormatName + (d.isInstrument ? ", instrument)" : ", effect)"), r.removeFromTop (19), juce::Justification::centredLeft);
+            if (left.getHeight() < 38) break;
+            g.drawText (d.name + "   " + d.manufacturerName + "   (" + d.pluginFormatName + (d.isInstrument ? ", instrument)" : ", effect)"),
+                        left.removeFromTop (19), juce::Justification::centredLeft, true);
+            ++shown;
+        }
+        if (shown < types.size())
+        {
+            g.setColour (Pal::textFaint);
+            g.drawText ("... and " + juce::String (types.size() - shown) + " more", left.removeFromTop (19), juce::Justification::centredLeft);
+        }
+
+        drawCaps (g, "Failed and skipped: " + juce::String ((int) failed.size()), right.removeFromTop (22), juce::Justification::centredLeft,
+                  failed.empty() ? Pal::textDim : Pal::rec, 10.0f);
+        if (failed.empty())
+        {
+            g.setColour (Pal::textFaint);
+            g.setFont (Fonts::ui (12.0f));
+            g.drawFittedText ("Each plugin loads in a separate helper process. If one crashes or stops responding, "
+                              "it's listed here and the scan moves on.", right.removeFromTop (60), juce::Justification::topLeft, 4);
+        }
+        int fshown = 0;
+        for (auto& f : failed)
+        {
+            if (right.getHeight() < 54) break;
+            auto row = right.removeFromTop (36);
+            auto tag = row.removeFromLeft (52).withSizeKeepingCentre (48, 16).toFloat();
+            g.setColour (Pal::rec.withAlpha (0.2f));
+            g.fillRoundedRectangle (tag, 3.0f);
+            g.setColour (Pal::rec);
+            g.setFont (Fonts::ui (10.0f, true));
+            g.drawText ("FAILED", tag, juce::Justification::centred);
+            g.setColour (Pal::text);
+            g.setFont (Fonts::ui (12.0f, true));
+            g.drawText (f.name + "  (" + f.format + ")", row.removeFromTop (18), juce::Justification::centredLeft, true);
+            g.setColour (Pal::textDim);
+            g.setFont (Fonts::ui (11.0f));
+            g.drawText (f.reason, row, juce::Justification::centredLeft, true);
+            ++fshown;
+        }
+        if (fshown < (int) failed.size())
+        {
+            g.setColour (Pal::textFaint);
+            g.setFont (Fonts::ui (12.0f));
+            g.drawText ("... and " + juce::String ((int) failed.size() - fshown) + " more", right.removeFromTop (19), juce::Justification::centredLeft);
         }
     }
 
@@ -303,12 +373,22 @@ public:
         scanBtn.setBounds (r.removeFromLeft (160));
         r.removeFromLeft (8);
         addBtn.setBounds (r.removeFromLeft (160));
+        r.removeFromLeft (8);
+        retryBtn.setBounds (r.removeFromLeft (200));
     }
 
 private:
-    void timerCallback() override { scanBtn.setEnabled (! Engine::get().plugins.isScanning()); }
-    juce::TextButton scanBtn { "Scan for plugins" }, addBtn { "Add a folder..." };
-    juce::String status { "Plugins are scanned in a separate step so a broken plugin can't take the app down." };
+    void timerCallback() override
+    {
+        auto& p = Engine::get().plugins;
+        const bool scanning = p.isScanning();
+        scanBtn.setButtonText (scanning ? "Stop scan" : "Scan for plugins");
+        retryBtn.setEnabled (! scanning && ! p.getFailedPlugins().empty());
+        addBtn.setEnabled (! scanning);
+        if (scanning) repaint();
+    }
+    juce::TextButton scanBtn { "Scan for plugins" }, addBtn { "Add a folder..." }, retryBtn { "Retry failed plugins" };
+    juce::String status { "Plugins are scanned in a separate process, so a broken plugin can't take the app down." };
     std::unique_ptr<juce::FileChooser> chooser;
 };
 

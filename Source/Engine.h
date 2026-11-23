@@ -191,7 +191,18 @@ public:
     float getInputLevel() const { return inputLevel.load(); }
     double getSamplingSeconds() const { return samplingLength / juce::jmax (1.0, sampleRate); }
     juce::StringArray getInputPairNames() const;
+    juce::StringArray getInputChannelNames() const;   // every channel of the input device
     juce::StringArray getOutputPairNames() const;
+
+    // Input device choice (CoreAudio / WASAPI / DirectSound keep inputs and outputs separate;
+    // ASIO uses one device for both, so the input device follows the output device).
+    juce::StringArray getInputDeviceNames() const;
+    juce::String getInputDeviceName() const;
+    bool canChooseInputDevice() const;
+    juce::String setInputDevice (const juce::String& name);
+    // Makes sure the given hardware input channels are switched on (the device only opens
+    // the channels it's asked for). Returns an error message, or empty.
+    juce::String requireInputChannels (int firstChannel, int numChannels);
 
     enum class SampleEdit { normalize, reverse, trim, cut, copy, paste, deleteRange, silence, fadeIn, fadeOut, stretch, pitch, gain, dcRemove };
     // Edits operate on [selStart, selEnd) (normalised) of the zone's sample; a copy is made, the file is untouched.
@@ -480,6 +491,7 @@ private:
     int samplingLength = 0;
     juce::AudioBuffer<float> samplingBuffer;
     std::atomic<float> inputLevel { 0.0f };
+    std::array<int, 32> activeInputToHardware {};   // device callback's packed input index -> hardware channel
 
     // audio track recording
     juce::TimeSliceThread diskWriterThread { "Crate disk writer" };

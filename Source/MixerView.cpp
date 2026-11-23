@@ -354,7 +354,8 @@ private:
         const auto pairs = e.getInputPairNames();
         juce::PopupMenu hw, mono, internal;
         for (int i = 0; i < pairs.size(); ++i) hw.addItem (1 + i, pairs[i], true, tr.inputSource == 0 && ! tr.inputMono && tr.inputPair == i);
-        for (int i = 0; i < pairs.size() * 2; ++i) mono.addItem (100 + i, "Input " + juce::String (i + 1), true, tr.inputSource == 0 && tr.inputMono && tr.inputPair == i);
+        const auto chans = e.getInputChannelNames();
+        for (int i = 0; i < chans.size(); ++i) mono.addItem (100 + i, chans[i], true, tr.inputSource == 0 && tr.inputMono && tr.inputPair == i);
         internal.addItem (300, "Main out (resample)", true, tr.inputSource == 1);
         for (int b = 0; b < cr::numBanks; ++b) if (e.session().banks[(size_t) b].created) internal.addItem (400 + b, e.session().banks[(size_t) b].name, true, tr.inputSource == 2 + b);
         for (int a = 0; a < e.session().auxCount; ++a) internal.addItem (600 + a, e.session().aux[(size_t) a].name, true, tr.inputSource == 200 + a);
@@ -369,6 +370,11 @@ private:
             else if (r == 300) t.inputSource = 1;
             else if (r >= 100) { t.inputSource = 0; t.inputMono = true; t.inputPair = r - 100; }
             else if (r >= 1) { t.inputSource = 0; t.inputMono = false; t.inputPair = r - 1; }
+            if (r >= 1 && r < 300)
+            {
+                auto err = Engine::get().requireInputChannels (t.inputMono ? t.inputPair : t.inputPair * 2, t.inputMono ? 1 : 2);
+                if (err.isNotEmpty()) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Input", err);
+            }
             inputField.repaint();
         });
     }
