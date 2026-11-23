@@ -43,6 +43,7 @@ private:
     void buildPeaks();
     int hitMarker (int x, int y) const;   // 0 start, 1 end, 2 loop start, 3 loop end, 100 + i slice
 
+    static constexpr int flagSize = 20;
     int bank = 0, pad = 0, layer = 0, zone = 0;
     Mode mode = Mode::markers;
     juce::Colour accent = Pal::accent;

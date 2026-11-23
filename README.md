@@ -1,8 +1,10 @@
-# Crate
+# Crate XL
 
-A pad sampler, sequencer and mixer for Windows and macOS. It's built around the classic pad-production workflow: **Performance → Editor → Sequencer → Mixer**, with 128 banks of 128 pads, multi-layer sampling, a song / scenes / pattern sequencer, a full mixer with unlimited effects, VST3 hosting (and Audio Units on macOS), and MIDI learn.
+Copyright © ILLAHTAINMENT. All rights reserved.
 
-On first launch Crate builds a small starter kit: an original drum kit plus keys and bass sounds, with a groove pattern. You can play straight away.
+Crate XL is a pad sampler, sequencer and mixer for Windows and macOS. It's built around the classic pad-production workflow: **Performance → Editor → Sequencer → Mixer**, with 128 banks of 128 pads, multi-layer sampling, a song / scenes / pattern sequencer, a full mixer with unlimited effects, VST3 hosting (and Audio Units on macOS), and MIDI learn.
+
+On first launch Crate XL builds a small starter kit: an original drum kit plus keys and bass sounds, with a groove pattern. You can play straight away.
 
 ---
 
@@ -31,10 +33,10 @@ You get a universal app (Apple Silicon + Intel) in `dist/`, ad-hoc signed so it 
 The name is set in one place, at the top of `CMakeLists.txt`:
 
 ```cmake
-set(CRATE_APP_NAME "Crate" CACHE STRING "Application name")
+set(CRATE_PRODUCT_NAME "Crate XL" CACHE STRING "Application name")
 ```
 
-You can also pass `-DCRATE_APP_NAME="My Name"` when configuring. The build scripts pick up whatever app they find.
+You can also pass `-DCRATE_PRODUCT_NAME="My Name"` when configuring. The build scripts copy the newest app they find.
 
 ---
 
@@ -107,7 +109,7 @@ Sessions (`.crsession`), bank presets (`.crbank`, with their samples), packs (`.
 
 Audio export covers the main mix or stems (one file per track), song / loop / custom range, 16/24/32-bit float or 12-bit vintage, normalize, and effect tails. Edited samples are saved with the session.
 
-Everything lives in `Documents/Crate` (Samples, Banks, Sessions, Packs, Recordings, Exports). The session auto-saves every two minutes. To get it back, use the menu → Restore auto-saved session.
+Everything lives in `Documents/Crate XL` (a `Documents/Crate` folder from an earlier version is renamed automatically) (Samples, Banks, Sessions, Packs, Recordings, Exports). The session auto-saves every two minutes. To get it back, use the menu → Restore auto-saved session.
 
 ---
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==========================================================================
-#  Crate - macOS build script (double-click in Finder, or run in Terminal)
+#  Crate XL - macOS build script (double-click in Finder, or run in Terminal)
 #  Requires: Xcode or the Command Line Tools (xcode-select --install),
 #            CMake 3.22+ (brew install cmake, or the cmake.org .dmg), Git.
 # ==========================================================================
@@ -32,7 +32,8 @@ cmake -S . -B build $GEN -DCMAKE_BUILD_TYPE=Release
 echo "=== Building Release ==="
 cmake --build build --config Release --parallel
 
-APP=$(find build/Crate_artefacts -maxdepth 3 -name "*.app" | head -n 1)
+# Newest .app wins, so an app built under an older name is never picked up
+APP=$(ls -td build/Crate_artefacts/*.app build/Crate_artefacts/*/*.app 2>/dev/null | head -n 1)
 if [ -z "$APP" ]; then echo "[ERROR] The app was not found after the build."; read -n 1 -s -r -p "Press any key..."; exit 1; fi
 mkdir -p dist
 NAME=$(basename "$APP")

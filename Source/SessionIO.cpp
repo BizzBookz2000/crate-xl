@@ -501,7 +501,7 @@ struct Serializer
 // ============================================================================
 juce::File Engine::getLibraryFolder()
 {
-    auto f = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Crate");
+    auto f = appFolderIn (juce::File::getSpecialLocation (juce::File::userDocumentsDirectory));
     if (! f.isDirectory())
     {
         f.createDirectory();
@@ -646,7 +646,7 @@ bool Engine::saveSession (const juce::File& file, juce::String& error, bool copy
     var root = Serializer::obj();
     {
         const juce::ScopedLock sl (lock);
-        Serializer::set (root, "app", "Crate");
+        Serializer::set (root, "app", "Crate XL");
         Serializer::set (root, "version", 1);
         Serializer::set (root, "appVersion", JUCE_APPLICATION_VERSION_STRING);
         Serializer::set (root, "bpm", sess.bpm);
@@ -918,7 +918,7 @@ bool Engine::saveBankPreset (int b, const juce::File& file, juce::String& error,
         const juce::ScopedLock sl (lock);
         root = Serializer::bankToVar (sess.banks[(size_t) b], savePatterns, sampleOut);
     }
-    Serializer::set (root, "app", "Crate");
+    Serializer::set (root, "app", "Crate XL");
     Serializer::set (root, "type", "bank");
     file.getParentDirectory().createDirectory();
     if (! file.replaceWithText (juce::JSON::toString (root, false))) { error = "Could not write " + file.getFullPathName(); return false; }

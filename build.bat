@@ -1,6 +1,6 @@
 @echo off
 REM ==========================================================================
-REM  Crate - Windows build script (double-click it)
+REM  Crate XL - Windows build script (double-click it)
 REM
 REM  Works with any Visual Studio that has "Desktop development with C++"
 REM  installed (2019, 2022, 2026 or newer). The script finds it automatically.
@@ -60,7 +60,8 @@ if errorlevel 1 goto :buildfail
 
 if not exist dist mkdir dist
 set "APPEXE="
-for %%f in ("%BDIR%\Crate_artefacts\Release\*.exe") do set "APPEXE=%%f"
+REM Newest .exe wins, so an app built under an older name is never picked up
+for /f "delims=" %%f in ('dir /b /o:d "%BDIR%\Crate_artefacts\Release\*.exe" 2^>nul') do set "APPEXE=%BDIR%\Crate_artefacts\Release\%%f"
 if not defined APPEXE goto :buildfail
 copy /y "%APPEXE%" "dist\" >nul
 if errorlevel 1 goto :buildfail

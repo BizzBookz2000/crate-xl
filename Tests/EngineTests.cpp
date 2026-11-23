@@ -329,6 +329,22 @@ int main (int argc, char** argv)
         check (std::abs ((double) len() - before * 0.5) < 3, "trim keeps the selection");
         check (e.undo(), "undo the trim");
         check (std::abs ((double) len() - before) < 3, "undo restores the sample");
+        check (e.redo(), "redo the trim");
+        check (std::abs ((double) len() - before * 0.5) < 3, "redo trims again");
+        e.undo();
+        {
+            auto& z = e.session().banks[0].pads[0].layers[0].zones[0];
+            z.slices = { 0.1f, 0.3f, 0.6f, 0.9f };
+            z.start = 0.2f; z.end = 0.8f;
+        }
+        e.editSample (0, 0, 0, 0, Engine::SampleEdit::trim, 0.2f, 0.8f);
+        {
+            const auto& z = e.session().banks[0].pads[0].layers[0].zones[0];
+            check (z.slices.size() == 2 && std::abs (z.slices[0] - 1.0f / 6.0f) < 0.002f && std::abs (z.slices[1] - 2.0f / 3.0f) < 0.002f,
+                   "trim to S/E keeps the chops inside, moved to the new length");
+            check (z.start == 0.0f && z.end == 1.0f, "trim resets S/E to the new ends");
+        }
+        e.undo();
         e.editSample (0, 0, 0, 0, Engine::SampleEdit::stretch, 0.0f, 1.0f, 2.0);
         check (std::abs ((double) len() - before * 2.0) < 10, "time stretch x2");
         e.undo();

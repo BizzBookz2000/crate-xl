@@ -1,6 +1,7 @@
 // Settings dialog (audio & MIDI, focus actions, behaviours, plugins, about), app settings
 // persistence, and the bank / pad MIDI setup pop-ups.
 #include "Views.h"
+#include "FileUtils.h"
 
 juce::StringArray& browserFavourites() { static juce::StringArray f; return f; }
 
@@ -8,7 +9,7 @@ namespace
 {
 juce::File settingsFile()
 {
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Crate").getChildFile ("settings.json");
+    return appFolderIn (juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)).getChildFile ("settings.json");
 }
 } // namespace
 
@@ -395,25 +396,48 @@ private:
 class AboutPage : public juce::Component
 {
 public:
+    AboutPage()
+    {
+        logo = juce::ImageCache::getFromMemory (BinaryData::Logo_png, BinaryData::Logo_pngSize);
+    }
+
     void paint (juce::Graphics& g) override
     {
         g.fillAll (Pal::panel);
         auto r = getLocalBounds().reduced (24, 20);
+
+        // logo on the left
+        auto logoArea = r.removeFromLeft (juce::jmin (260, r.getHeight() - 40));
+        if (logo.isValid())
+            g.drawImage (logo, logoArea.withHeight (logoArea.getWidth()).toFloat(),
+                         juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize);
+        r.removeFromLeft (28);
+
         g.setColour (Pal::text);
         g.setFont (Fonts::heavy (26.0f));
         g.drawText (JUCE_APPLICATION_NAME_STRING, r.removeFromTop (36), juce::Justification::centredLeft);
         g.setColour (Pal::textDim);
         g.setFont (Fonts::ui (13.0f));
         g.drawText ("Version " JUCE_APPLICATION_VERSION_STRING, r.removeFromTop (22), juce::Justification::centredLeft);
+        r.removeFromTop (6);
+        g.setColour (Pal::text);
+        g.setFont (Fonts::ui (13.0f, true));
+        g.drawText (juce::String (juce::CharPointer_UTF8 ("\xc2\xa9 ")) + juce::String (juce::Time::getCurrentTime().getYear())
+                        + " ILLAHTAINMENT. All rights reserved.", r.removeFromTop (22), juce::Justification::centredLeft);
         r.removeFromTop (12);
+        g.setColour (Pal::textDim);
+        g.setFont (Fonts::ui (13.0f));
         g.drawFittedText ("Pad sampler, sequencer and mixer for Windows and macOS.\n\n"
                           "Library folder: " + Engine::getLibraryFolder().getFullPathName() + "\n\n"
                           "Shortcuts: Space play/stop, R record, L loop, C metronome, T tap tempo, F1-F4 views, Tab next view, "
-                          "B browser, X effects, M macros, K keyboard, Ctrl/Cmd+Z undo, Ctrl/Cmd+S save, Ctrl/Cmd+E export. "
+                          "B browser, X effects, M macros, K keyboard, Ctrl/Cmd+Z undo, Ctrl/Cmd+Y redo, Ctrl/Cmd+S save, Ctrl/Cmd+E export. "
                           "Computer keys Z X C V / A S D F / Q W E R / 1 2 3 4 play the 16 pads.\n\n"
                           "Built with JUCE. Interface font: Inter (SIL Open Font License).",
-                          r.removeFromTop (240), juce::Justification::topLeft, 14);
+                          r.removeFromTop (260), juce::Justification::topLeft, 16);
     }
+
+private:
+    juce::Image logo;
 };
 
 class SettingsComponent : public juce::Component

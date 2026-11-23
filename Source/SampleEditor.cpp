@@ -209,13 +209,14 @@ void WaveformView::paint (juce::Graphics& g)
     g.setColour (Pal::line.withAlpha (0.5f));
     g.fillRect ((float) r.getX(), mid, (float) r.getWidth(), 1.0f);
 
-    auto flag = [&] (float pos, juce::Colour c, const juce::String& label, bool atTop)
+    auto flag = [&] (float pos, juce::Colour c, const juce::String& label, bool atTop, bool leftSide = false)
     {
         const float x = posToX (pos);
         if (x < (float) r.getX() - 1.0f || x > (float) r.getRight() + 1.0f) return;
         g.setColour (c);
         g.fillRect (x - 0.5f, (float) r.getY(), 1.5f, (float) r.getHeight());
-        auto f = juce::Rectangle<float> (x, atTop ? (float) r.getY() : (float) r.getBottom() - 14.0f, 14.0f, 14.0f);
+        const float fw = (float) flagSize;
+        auto f = juce::Rectangle<float> (leftSide ? x - fw : x, atTop ? (float) r.getY() : (float) r.getBottom() - fw, fw, fw);
         g.fillRect (f);
         g.setColour (Pal::bg);
         g.setFont (Fonts::ui (9.5f, true));
@@ -224,6 +225,14 @@ void WaveformView::paint (juce::Graphics& g)
 
     if (mode == Mode::slices || ! z->slices.empty())
     {
+        if (mode == Mode::slices)
+        {
+            auto hint = ruler.withTrimmedRight (6);
+            hint = hint.removeFromRight (juce::jmin (hint.getWidth(), 400));
+            g.setColour (Pal::panel);
+            g.fillRect (hint);
+            drawCaps (g, "Click the ruler to add a slice, drag to move, right-click to remove", hint, juce::Justification::centredRight, Pal::textFaint, 9.0f);
+        }
         for (size_t i = 0; i < z->slices.size(); ++i)
         {
             const float x = posToX (z->slices[i]);
@@ -239,15 +248,11 @@ void WaveformView::paint (juce::Graphics& g)
                 g.drawText (juce::String ((int) i + 1), juce::Rectangle<float> (x, (float) ruler.getY(), 16.0f, (float) ruler.getHeight()), juce::Justification::centred);
             }
         }
-        if (mode == Mode::slices)
-            drawCaps (g, "Click the ruler to add a slice, drag to move, right-click to remove", ruler.withTrimmedLeft (8).withTrimmedRight (8), juce::Justification::centredRight, Pal::textFaint, 9.0f);
     }
-    if (mode == Mode::markers)
-    {
-        if (looping) { flag (z->loopStart, Pal::info, "L", false); flag (z->loopEnd, Pal::info, "L", false); }
-        flag (z->start, Pal::play, "S", true);
-        flag (z->end, Pal::rec, "E", true);
-    }
+    // Start / end flags show in every mode and can always be dragged by the flag.
+    if (mode == Mode::markers && looping) { flag (z->loopStart, Pal::info, "L", false); flag (z->loopEnd, Pal::info, "L", false); }
+    flag (z->start, Pal::play, "S", true);
+    flag (z->end, Pal::rec, "E", true, true);
 
     // preview playhead
     auto& e = Engine::get();
@@ -264,6 +269,14 @@ int WaveformView::hitMarker (int x, int y) const
     auto* z = getZone();
     if (z == nullptr) return -1;
     auto near = [&] (float pos) { return std::abs (posToX (pos) - (float) x) < 6.0f; };
+    // the S / E flags at the top of the waveform (S sits right of its line, E left of its line)
+    const auto wa = waveArea();
+    if (y >= wa.getY() - 2 && y <= wa.getY() + flagSize + 4)
+    {
+        const float xs = posToX (z->start), xe = posToX (z->end);
+        if ((float) x >= xe - (float) flagSize - 2.0f && (float) x <= xe + 3.0f) return 1;
+        if ((float) x >= xs - 3.0f && (float) x <= xs + (float) flagSize + 2.0f) return 0;
+    }
     if (mode == Mode::slices)
     {
         for (size_t i = 0; i < z->slices.size(); ++i) if (near (z->slices[i])) return 100 + (int) i;
@@ -439,9 +452,11 @@ public:
         add (copyBtn, [this] { apply (Engine::SampleEdit::copy); Nav::setStatus ("Copied"); updateButtons(); });
         add (pasteBtn, [this] { apply (Engine::SampleEdit::paste); });
         add (deleteBtn, [this] { apply (Engine::SampleEdit::deleteRange); });
-        add (trimBtn, [this] { apply (Engine::SampleEdit::trim); });
+        add (trimBtn, [this] { trim(); });
+        trimBtn.setTooltip ("Trim to the selection, or to the start (S) and end (E) markers when nothing is selected");
         add (processBtn, [this] { showProcessMenu(); });
-        add (undoBtn, [this] { if (Engine::get().undo()) { wave.setTarget (bank, pad, layer, zone); ViewBase::broadcast(); } });
+        add (undoBtn, [this] { if (Engine::get().undo()) afterUndoRedo(); });
+        add (redoBtn, [this] { if (Engine::get().redo()) afterUndoRedo(); });
         add (doneBtn, [] { Engine::get().stopPreview(); Nav::closeOverlay(); });
         doneBtn.setColour (juce::TextButton::buttonColourId, Pal::accent);
         doneBtn.setColour (juce::TextButton::textColourOffId, Pal::bg);
@@ -510,6 +525,8 @@ public:
         auto top = r.removeFromTop (54).reduced (16, 11);
         doneBtn.setBounds (top.removeFromRight (90));
         top.removeFromRight (12);
+        redoBtn.setBounds (top.removeFromRight (70));
+        top.removeFromRight (4);
         undoBtn.setBounds (top.removeFromRight (70));
         top.removeFromRight (12);
         for (auto* b : { &zoomFit, &zoomSel, &zoomOut, &zoomIn }) { b->setBounds (top.removeFromRight (32)); top.removeFromRight (2); }
@@ -534,12 +551,39 @@ private:
         const bool sel = wave.selEnd - wave.selStart > 0.0001f;
         cutBtn.setEnabled (sel);
         deleteBtn.setEnabled (sel);
-        trimBtn.setEnabled (sel);
+        trimBtn.setEnabled (sel || markersTrimmed());
         setStartEndBtn.setEnabled (sel);
         setLoopBtn.setEnabled (sel);
         pasteBtn.setEnabled (Engine::get().hasAudioClipboard());
         undoBtn.setEnabled (Engine::get().canUndo());
+        redoBtn.setEnabled (Engine::get().canRedo());
         playBtn.setButtonText (Engine::get().isPreviewing() ? "Stop" : "Play");
+    }
+
+    bool markersTrimmed() const
+    {
+        auto* z = wave.getZone();
+        return z != nullptr && (z->start > 0.0001f || z->end < 0.9999f);
+    }
+
+    // Trim keeps the selection; with no selection it keeps what's between the S and E markers.
+    void trim()
+    {
+        if (wave.selEnd - wave.selStart > 0.0001f) { apply (Engine::SampleEdit::trim); return; }
+        auto* z = wave.getZone();
+        if (z == nullptr || ! markersTrimmed()) { Nav::setStatus ("Select a region, or move the S and E markers, then Trim"); return; }
+        wave.selStart = z->start;
+        wave.selEnd = z->end;
+        apply (Engine::SampleEdit::trim);
+    }
+
+    void afterUndoRedo()
+    {
+        wave.selStart = wave.selEnd = 0.0f;
+        wave.setTarget (bank, pad, layer, zone);
+        wave.repaint();
+        updateButtons();
+        ViewBase::broadcast();
     }
 
     void apply (Engine::SampleEdit edit, double amount = 0.0)
@@ -620,7 +664,7 @@ private:
     WaveformView wave;
     TabStrip modeTabs;
     juce::TextButton snapBtn { "Zero snap" }, allBtn { "All" }, playBtn { "Play" }, cutBtn { "Cut" }, copyBtn { "Copy" }, pasteBtn { "Paste" },
-                     deleteBtn { "Delete" }, trimBtn { "Trim" }, processBtn { "Process" }, undoBtn { "Undo" }, doneBtn { "Done" },
+                     deleteBtn { "Delete" }, trimBtn { "Trim" }, processBtn { "Process" }, undoBtn { "Undo" }, redoBtn { "Redo" }, doneBtn { "Done" },
                      setStartEndBtn { "Set start/end" }, setLoopBtn { "Set loop" };
     IconButton zoomIn { Icon::zoomIn, "Zoom in" }, zoomOut { Icon::zoomOut, "Zoom out" }, zoomSel { Icon::select, "Zoom to selection" }, zoomFit { Icon::grid, "Show all" };
 };

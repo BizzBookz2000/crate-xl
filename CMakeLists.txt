@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
 
 # The app's name is set here (and nowhere else in the build).
-set(CRATE_APP_NAME "Crate" CACHE STRING "Application name")
+set(CRATE_PRODUCT_NAME "Crate XL" CACHE STRING "Application name")
 
-project(Crate VERSION 1.0.0 LANGUAGES C CXX)
+project(Crate VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -64,9 +64,10 @@ endif()
 # The app
 # ---------------------------------------------------------------------------
 juce_add_gui_app(Crate
-    PRODUCT_NAME "${CRATE_APP_NAME}"
-    COMPANY_NAME "${CRATE_APP_NAME}"
-    BUNDLE_ID "com.crate.studio"
+    PRODUCT_NAME "${CRATE_PRODUCT_NAME}"
+    COMPANY_NAME "ILLAHTAINMENT"
+    COMPANY_COPYRIGHT "Copyright (c) ILLAHTAINMENT. All rights reserved."
+    BUNDLE_ID "com.illahtainment.cratexl"
     VERSION "${PROJECT_VERSION}"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Icon.png"
     MICROPHONE_PERMISSION_ENABLED TRUE
@@ -78,11 +79,13 @@ juce_generate_juce_header(Crate)
 juce_add_binary_data(CrateData SOURCES
     Resources/Fonts/Inter-Regular.ttf
     Resources/Fonts/Inter-SemiBold.ttf
-    Resources/Fonts/Inter-Bold.ttf)
+    Resources/Fonts/Inter-Bold.ttf
+    Resources/Logo.png)
 
 target_sources(Crate PRIVATE
     ${CRATE_ENGINE_SOURCES}
     Source/Main.cpp
+    Source/WindowStyle.cpp
     Source/UiCommon.cpp
     Source/MainComponent.cpp
     Source/PerformanceView.cpp
@@ -118,6 +121,10 @@ target_link_libraries(Crate
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+if(WIN32)
+    target_link_libraries(Crate PRIVATE dwmapi)   # black title bars
+endif()
 
 if(UNIX AND NOT APPLE)
     find_package(OpenGL REQUIRED)

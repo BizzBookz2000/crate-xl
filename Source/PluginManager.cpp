@@ -1,4 +1,5 @@
 #include "PluginManager.h"
+#include "FileUtils.h"
 
 static void addFormats (juce::AudioPluginFormatManager& fm);
 
@@ -27,7 +28,7 @@ PluginManager::~PluginManager()
 
 juce::File PluginManager::getDataFile (const juce::String& name) const
 {
-    auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Crate");
+    auto dir = appFolderIn (juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory));
     dir.createDirectory();
     return dir.getChildFile (name);
 }

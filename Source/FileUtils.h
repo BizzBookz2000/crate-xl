@@ -14,3 +14,14 @@ inline std::unique_ptr<juce::AudioFormatWriter> createWavWriter (const juce::Fil
                                             .withNumChannels (numChannels)
                                             .withBitsPerSample (bitsPerSample));
 }
+
+// The app's own folder inside 'parent' (Documents, or the per-user app data folder).
+// Folders made by earlier versions (called "Crate") are renamed to the new name once.
+inline juce::File appFolderIn (const juce::File& parent)
+{
+    auto folder = parent.getChildFile ("Crate XL");
+    auto old = parent.getChildFile ("Crate");
+    if (! folder.exists() && old.isDirectory())
+        old.moveFileTo (folder);
+    return folder;
+}

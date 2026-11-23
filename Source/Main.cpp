@@ -1,6 +1,26 @@
 #include <JuceHeader.h>
+#include <set>
 #include "Engine.h"
 #include "MainComponent.h"
+
+void styleNativeTitleBar (void* nativeHandle);   // WindowStyle.cpp
+
+// Every native window (main window, dialogs, plugin windows) gets the black title bar.
+class TitleBarStyler : private juce::Timer
+{
+public:
+    TitleBarStyler() { startTimer (250); }
+private:
+    void timerCallback() override
+    {
+        for (int i = 0; i < juce::ComponentPeer::getNumPeers(); ++i)
+            if (auto* peer = juce::ComponentPeer::getPeer (i))
+                if (auto* h = peer->getNativeHandle(); h != nullptr && styled.insert (h).second)
+                    styleNativeTitleBar (h);
+        if (styled.size() > 512) styled.clear();
+    }
+    std::set<void*> styled;
+};
 
 class CrateApplication : public juce::JUCEApplication
 {
@@ -30,12 +50,17 @@ public:
         juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
         engine = std::make_unique<Engine>();
         mainWindow = std::make_unique<MainWindow> (getApplicationName());
+       #if JUCE_WINDOWS
+        styleNativeTitleBar (mainWindow->getWindowHandle());
+        titleBars = std::make_unique<TitleBarStyler>();
+       #endif
         openFromCommandLine (commandLine);
     }
 
     void shutdown() override
     {
         if (scanHelper != nullptr) { scanHelper = nullptr; return; }
+        titleBars = nullptr;
         PluginWindow::closeAll();
         mainWindow = nullptr;
         engine = nullptr;
@@ -97,6 +122,7 @@ private:
     std::unique_ptr<Engine> engine;
     std::unique_ptr<MainWindow> mainWindow;
     std::unique_ptr<ScanHelper> scanHelper;
+    std::unique_ptr<TitleBarStyler> titleBars;
 };
 
 START_JUCE_APPLICATION (CrateApplication)

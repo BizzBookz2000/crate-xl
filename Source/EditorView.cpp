@@ -333,6 +333,20 @@ public:
         sliceModeBtn.setClickingTogglesState (false);
         sliceModeBtn.onClick = [this] { setSliceMode (wave.getMode() != WaveformView::Mode::slices); };
         editBtn.onClick = [] { if (selZone() >= 0) Nav::showOverlay (createAudioEditor (selBank(), selPad(), selLayer(), selZone())); };
+        trimBtn.setTooltip ("Cut the sample down to what's between the S and E markers");
+        trimBtn.onClick = [this]
+        {
+            auto* z = wave.getZone();
+            if (z == nullptr) return;
+            if (z->start <= 0.0001f && z->end >= 0.9999f) { Nav::setStatus ("Move the S and E markers first, then Trim"); return; }
+            if (Engine::get().editSample (selBank(), selPad(), selLayer(), selZone(), Engine::SampleEdit::trim, z->start, z->end))
+            {
+                wave.setTarget (selBank(), selPad(), selLayer(), selZone());
+                wave.zoomToFit();
+                Nav::setStatus ("Trimmed to the markers (Ctrl/Cmd+Z to undo)");
+                ViewBase::broadcast();
+            }
+        };
         snapBtn.setClickingTogglesState (true);
         snapBtn.setToggleState (true, juce::dontSendNotification);
         snapBtn.onClick = [this] { wave.zeroSnap = snapBtn.getToggleState(); };
@@ -345,7 +359,7 @@ public:
         zoomLabel.setJustificationType (juce::Justification::centred);
         zoomLabel.setFont (Fonts::caps (10.5f));
         zoomLabel.setColour (juce::Label::backgroundColourId, Pal::surface);
-        for (auto* b : std::initializer_list<juce::Button*> { &recBtn, &sampleMenuBtn, &autoSliceBtn, &saveBtn, &sliceModeBtn, &editBtn, &snapBtn,
+        for (auto* b : std::initializer_list<juce::Button*> { &recBtn, &sampleMenuBtn, &autoSliceBtn, &saveBtn, &sliceModeBtn, &editBtn, &trimBtn, &snapBtn,
                                                            &zoomIn, &zoomOut, &scrollLeft, &scrollRight, &toStart, &toEnd })
             addBtn (*b);
         addAndMakeVisible (zoomLabel);
@@ -467,7 +481,7 @@ public:
         cutoff.setEnabled (hasLayer && layer->p.filter != cr::FilterType::off);
         reso.setEnabled (hasLayer && layer->p.filter != cr::FilterType::off);
         sliceModeBtn.setToggleState (wave.getMode() == WaveformView::Mode::slices, juce::dontSendNotification);
-        for (auto* b2 : std::initializer_list<juce::Button*> { &autoSliceBtn, &saveBtn, &sliceModeBtn, &editBtn, &sampleMenuBtn }) b2->setEnabled (z >= 0);
+        for (auto* b2 : std::initializer_list<juce::Button*> { &autoSliceBtn, &saveBtn, &sliceModeBtn, &editBtn, &trimBtn, &sampleMenuBtn }) b2->setEnabled (z >= 0);
         updateZoom();
         resized();
         repaint();
@@ -512,6 +526,8 @@ public:
         recBtn.setBounds (top.removeFromLeft (52));
         top.removeFromLeft (10);
         editBtn.setBounds (top.removeFromRight (70).reduced (0, 3));
+        top.removeFromRight (6);
+        trimBtn.setBounds (top.removeFromRight (64).reduced (0, 3));
         top.removeFromRight (6);
         sliceModeBtn.setBounds (top.removeFromRight (104).reduced (0, 3));
         top.removeFromRight (6);
@@ -643,7 +659,7 @@ private:
     WaveformView wave;
     std::unique_ptr<juce::FileChooser> chooser;
     IconButton recBtn { Icon::record, "Record a sample onto this pad" }, sampleMenuBtn { Icon::dots, "Sample options" };
-    juce::TextButton autoSliceBtn { "Auto-slice" }, saveBtn { "Save..." }, sliceModeBtn { "Slice mode" }, editBtn { "Edit" }, snapBtn { "Zero snap" };
+    juce::TextButton autoSliceBtn { "Auto-slice" }, saveBtn { "Save..." }, sliceModeBtn { "Slice mode" }, editBtn { "Edit" }, trimBtn { "Trim" }, snapBtn { "Zero snap" };
     IconButton zoomIn { Icon::zoomIn, "Zoom in" }, zoomOut { Icon::zoomOut, "Zoom out" }, scrollLeft { Icon::left, "Scroll left" },
                scrollRight { Icon::right, "Scroll right" }, toStart { Icon::rewind, "Go to start" }, toEnd { Icon::forward, "Go to end" };
     juce::Label zoomLabel;

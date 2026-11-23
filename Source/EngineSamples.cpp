@@ -357,7 +357,24 @@ bool Engine::editSample (int b, int p, int l, int z, SampleEdit edit, float selS
     {
         const juce::ScopedLock sl (lock);
         auto& zone = sess.banks[(size_t) b].pads[(size_t) p].layers[(size_t) l].zones[(size_t) z];
-        if (lengthChanged)
+        if (edit == SampleEdit::trim && len > 0)
+        {
+            // Trim keeps the chops: slices and loop points inside the kept part move with it.
+            const double a = (double) s0 / len, w = juce::jmax (1.0e-9, (double) (s1 - s0) / len);
+            auto remap = [a, w] (float x) { return (float) juce::jlimit (0.0, 1.0, ((double) x - a) / w); };
+            std::vector<float> kept;
+            for (auto x : zone.slices)
+            {
+                const double y = ((double) x - a) / w;
+                if (y >= 0.0 && y < 1.0) kept.push_back ((float) y);
+            }
+            zone.slices = std::move (kept);
+            zone.loopStart = remap (zone.loopStart);
+            zone.loopEnd = remap (zone.loopEnd);
+            if (zone.loopEnd <= zone.loopStart) { zone.loopStart = 0.0f; zone.loopEnd = 1.0f; }
+            zone.start = 0.0f; zone.end = 1.0f;
+        }
+        else if (lengthChanged)
         {
             zone.start = 0.0f; zone.end = 1.0f; zone.loopStart = 0.0f; zone.loopEnd = 1.0f;
             zone.slices.clear();
