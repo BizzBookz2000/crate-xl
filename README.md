@@ -77,6 +77,7 @@ You can also pass `-DCRATE_PRODUCT_NAME="My Name"` when configuring. The build s
 
 ### Editor view
 
+- **Duplicate bank** (in the bank menu on the Performance screen, and in the Banks menu in the Editor) copies every pad, sample, setting and pattern into the next free bank.
 - The **Banks** button (the pads icon next to the bank name) picks a bank (any of the 128). It also makes a new bank, duplicates the current one, copies a bank and pastes it over another or into a new one, renames, clears or deletes.
 
 - Pad selector, channel settings (volume, pan, sends, choke group, link group, pad note, keys mode, output, MIDI setup), and the layers & samples list.
@@ -100,7 +101,8 @@ You can also pass `-DCRATE_PRODUCT_NAME="My Name"` when configuring. The build s
 - **Song**: arranger with bank tracks and audio tracks, plus loop markers in the ruler. Draw, move, resize, split, duplicate and repeat clips. Drag the pattern chip onto the timeline. Each track can follow the song or play its own pattern. There are track automation lanes, and you can drop audio files onto the timeline.
 - **Scenes**: a pattern grid per track; launches quantised to 1 beat, or 1/2/4/8 bars. Capture, duplicate, rename, reorder, and paste a scene to the end of the song.
 - **Loop button**: with Loop on, playback repeats between the loop markers, and a pattern playing on its own repeats. With Loop off, nothing repeats. A pattern plays once, and recording keeps running forward, so the pattern grows a bar at a time as you play past its end.
-- **Recording puts the pattern in place**: when you stop, what you recorded appears on the bank's song track, at the spot where you recorded it and as long as it played (in whole loops). It also goes into the scene grid (the last scene you launched, or the next free one). The pattern chip at the bottom still works for dragging copies anywhere. Turning Record off while playing keeps the loop going, so you can keep overdubbing.
+- **Recording puts the pattern in place**: as soon as you record, what you've recorded appears (and grows while you record) on the bank's song track, at the spot where you recorded it and as long as it played (in whole loops). It also goes into the scene grid (the last scene you launched, or the next free one). The pattern chip at the bottom still works for dragging copies anywhere. Turning Record off while playing keeps the loop going, so you can keep overdubbing.
+- **Copy a sequence**: right-click song clips → Copy (sequence + patterns), then Paste at playhead. The pasted clips get their own copies of the patterns, so editing them doesn't change the originals. "Paste onto <bank>" puts them on the selected bank's track. The pattern menu also has Copy pattern / Paste pattern, which works across banks.
 - **Pattern**: piano roll for pads and for keys-mode pads (128 keys). Tools: select, draw and paint. Quantize with swing, a velocity lane, copy/paste, double the pattern, and pattern automation lanes.
 
 ### Mixer view

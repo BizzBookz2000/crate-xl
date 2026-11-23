@@ -1021,6 +1021,16 @@ bool Engine::pasteBank (int b, juce::String& error)
     return true;
 }
 
+int Engine::duplicateBank (int b, juce::String& error)
+{
+    const int f = firstFreeBank();
+    if (f < 0) { error = "All 128 banks are in use."; return -1; }
+    if (! copyBank (b, error) || ! pasteBank (f, error)) return -1;
+    auto& nb = sess.banks[(size_t) f];
+    nb.colour = sess.banks[(size_t) b].colour;
+    return f;
+}
+
 int Engine::firstFreeBank() const
 {
     for (int b = 0; b < cr::numBanks; ++b) if (! sess.banks[(size_t) b].created) return b;

@@ -929,6 +929,10 @@ public:
         m.addItem (4, "Repeat to fill 4 more times");
         m.addItem (5, "Edit pattern");
         m.addItem (6, "Make pattern unique (copy)");
+        m.addSeparator();
+        m.addItem (7, "Copy (sequence + patterns)");
+        m.addItem (8, "Paste at playhead", Engine::get().hasSongClipboard());
+        m.addItem (9, "Paste at playhead onto " + Engine::get().session().banks[(size_t) Engine::get().selectedBank].name, Engine::get().hasSongClipboard());
         if (firstSelectedAudioClip().first >= 0)
         {
             m.addSeparator();
@@ -1005,6 +1009,15 @@ public:
         auto& s = e.session();
         if (r == 0) return;
         if (r == 5) { for (auto& c : s.song) if (c.selected) { e.selectedBank = c.bank; s.banks[(size_t) c.bank].workingPattern = c.pattern; if (onEditPattern) onEditPattern(); return; } return; }
+        if (r == 7) { const int n = e.copySongClips(); Nav::setStatus (juce::String (n) + (n == 1 ? " clip" : " clips") + " copied with their patterns"); return; }
+        if (r == 8 || r == 9)
+        {
+            const int at = snapTo (e.getPositionTicks(), cr::barTicks(), true);
+            e.pasteSongClips (juce::jmax (0, at), r == 9 ? e.selectedBank.load() : -1);
+            repaint();
+            ViewBase::broadcast();
+            return;
+        }
         e.checkpoint();
         const juce::ScopedLock sl (e.getLock());
         int selStart = std::numeric_limits<int>::max(), selEnd = 0;
@@ -2085,6 +2098,9 @@ private:
         m.addItem (4, "Clear pattern");
         m.addItem (5, "Delete pattern");
         m.addItem (6, "Play this pattern");
+        m.addSeparator();
+        m.addItem (7, "Copy pattern");
+        m.addItem (8, "Paste pattern into " + bank.name, Engine::get().hasPatternClipboard());
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&patternBtn), [b] (int r)
         {
             auto& en = Engine::get();
@@ -2097,6 +2113,8 @@ private:
             else if (r == 4) { en.checkpoint(); const juce::ScopedLock sl (en.getLock()); bk.patterns[(size_t) bk.workingPattern].notes.clear(); bk.patterns[(size_t) bk.workingPattern].automation.clear(); }
             else if (r == 5) en.deletePattern (b, bk.workingPattern);
             else if (r == 6) en.launchPattern (b, bk.workingPattern);
+            else if (r == 7) { en.copyPattern (b, bk.workingPattern); Nav::setStatus ("Pattern copied"); }
+            else if (r == 8) en.pastePattern (b);
             ViewBase::broadcast();
         });
     }

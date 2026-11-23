@@ -1168,6 +1168,11 @@ private:
         m.addItem (2, "Bank colour...");
         m.addItem (3, "MIDI setup...");
         m.addSeparator();
+        m.addItem (20, "New bank", e.firstFreeBank() >= 0);
+        m.addItem (21, "Duplicate bank (pads, samples, settings, patterns)", e.firstFreeBank() >= 0);
+        m.addItem (22, "Copy bank");
+        m.addItem (23, "Paste bank over this one", e.hasBankClipboard());
+        m.addSeparator();
         m.addItem (4, "Load bank preset...");
         m.addItem (5, "Save as bank preset...");
         m.addSeparator();
@@ -1197,6 +1202,15 @@ private:
                 });
             }
             else if (r == 3) showBankMidiSetup (b, target);
+            else if (r >= 20 && r <= 23)
+            {
+                juce::String err;
+                if (r == 20) { const int f = en.firstFreeBank(); if (f >= 0) { en.checkpoint(); en.createBank (f); en.selectedBank = f; en.selectedPad = 0; } }
+                else if (r == 21) { const int f = en.duplicateBank (b, err); if (f >= 0) { en.selectedBank = f; Nav::setStatus ("Duplicated to " + cr::bankLetter (f)); } }
+                else if (r == 22) { if (en.copyBank (b, err)) Nav::setStatus ("Copied " + bank.name); }
+                else if (r == 23) en.pasteBank (b, err);
+                if (err.isNotEmpty()) showError ("Banks", err);
+            }
             else if (r == 4 || r == 5) { en.selectedBank = b; Nav::setStatus ("Use the menu at the top left: Banks"); }
             else if (r == 6) { for (int p = 0; p < cr::numPads; ++p) if (bank.pads[(size_t) p].hasSound() || bank.pads[(size_t) p].name.isNotEmpty()) en.clearPad (b, p); }
             else if (r == 7) en.deleteBank (b);

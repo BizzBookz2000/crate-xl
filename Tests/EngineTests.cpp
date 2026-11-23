@@ -624,6 +624,45 @@ int main (int argc, char** argv)
         e.session().loopOn = false;
     }
 
+    std::cout << "Bank, pattern and sequence copies" << std::endl;
+    {
+        juce::String err;
+        auto& s0 = e.session();
+        s0.banks[0].strip.volume = 0.42f;
+        s0.banks[0].strip.eq.band[1].on = true; s0.banks[0].strip.eq.band[1].gain = 5.0f;
+        int padsWithSound = 0; for (auto& p : s0.banks[0].pads) if (p.hasSound()) ++padsWithSound;
+        const int f = e.duplicateBank (0, err);
+        check (f > 0 && err.isEmpty(), "duplicate a bank into the next free bank " + err);
+        if (f > 0)
+        {
+            const auto& nb = e.session().banks[(size_t) f];
+            int n = 0; for (auto& p : nb.pads) if (p.hasSound()) ++n;
+            check (n == padsWithSound && n > 0, "the duplicate has the same pads and samples (" + juce::String (n) + ")");
+            check (std::abs (nb.strip.volume - 0.42f) < 0.001f && nb.strip.eq.band[1].on && std::abs (nb.strip.eq.band[1].gain - 5.0f) < 0.01f, "the duplicate keeps the bank settings (volume, EQ)");
+            check (nb.patterns.size() == e.session().banks[0].patterns.size(), "the duplicate has the patterns");
+            e.deleteBank (f);
+        }
+        // pattern copy into another bank
+        e.copyPattern (0, 0);
+        e.createBank (5);
+        const int before = (int) e.session().banks[5].patterns.size();
+        const int pp = e.pastePattern (5);
+        check (pp == before && e.session().banks[5].patterns[(size_t) pp].notes.size() == e.session().banks[0].patterns[0].notes.size(), "copy a pattern into another bank");
+        // sequence copy: the clip and its pattern
+        {
+            const juce::ScopedLock sl (e.getLock());
+            e.session().song = { { 0, 0, 0, cr::barTicks() } };
+            e.session().song[0].selected = true;
+        }
+        check (e.copySongClips() == 1, "copy a song clip");
+        const int patsBefore = (int) e.session().banks[0].patterns.size();
+        check (e.pasteSongClips (4 * cr::barTicks(), -1) == 1 && e.session().song.size() == 2, "paste it at a new spot");
+        const auto& pasted = e.session().song.back();
+        check (pasted.start == 4 * cr::barTicks() && pasted.pattern == patsBefore && (int) e.session().banks[0].patterns.size() == patsBefore + 1,
+               "the pasted clip gets its own copy of the pattern");
+        e.deleteBank (5);
+    }
+
     std::cout << "Resampling" << std::endl;
     {
         // a bank that plays: pad 1 of bank 0, a note every beat for one bar

@@ -1154,7 +1154,7 @@ void showBanksMenu (juce::Component* target)
     m.addSeparator();
     const int freeBank = e.firstFreeBank();
     m.addItem (1, "New bank", freeBank >= 0);
-    m.addItem (2, "Duplicate " + s.banks[(size_t) cur].name + " to a new bank", freeBank >= 0 && s.banks[(size_t) cur].created);
+    m.addItem (2, "Duplicate bank (pads, samples, settings, patterns)", freeBank >= 0 && s.banks[(size_t) cur].created);
     m.addSeparator();
     m.addItem (3, "Copy bank", s.banks[(size_t) cur].created);
     m.addItem (4, "Paste over " + s.banks[(size_t) cur].name, e.hasBankClipboard());
@@ -1173,7 +1173,7 @@ void showBanksMenu (juce::Component* target)
         auto go = [&en] (int bank) { en.createBank (bank); en.selectedBank = bank; en.selectedPad = 0; };
         if (r >= 1000) go (r - 1000);
         else if (r == 1) { const int f = en.firstFreeBank(); if (f >= 0) { en.checkpoint(); go (f); } }
-        else if (r == 2) { if (en.copyBank (b, err)) { const int f = en.firstFreeBank(); if (f >= 0 && en.pasteBank (f, err)) go (f); } }
+        else if (r == 2) { const int f = en.duplicateBank (b, err); if (f >= 0) { go (f); Nav::setStatus ("Duplicated to " + cr::bankLetter (f)); } }
         else if (r == 3) { if (en.copyBank (b, err)) Nav::setStatus ("Copied " + ss.banks[(size_t) b].name); }
         else if (r == 4) en.pasteBank (b, err);
         else if (r == 5) { const int f = en.firstFreeBank(); if (f >= 0 && en.pasteBank (f, err)) go (f); }

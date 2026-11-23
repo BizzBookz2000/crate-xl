@@ -1,5 +1,6 @@
 // Engine core: construction, session defaults, transport, the audio callback and the mixer.
 #include "Engine.h"
+#include <map>
 #include "FileUtils.h"
 
 Engine* Engine::instance = nullptr;
@@ -445,12 +446,12 @@ void Engine::stop()
 // When a recording ends, what was recorded appears on its own: the pattern is placed in the
 // song at the spot it was recorded (as long as it played, in whole loops) and in the scene grid.
 // The pattern chip at the bottom still works for dragging copies anywhere.
-void Engine::commitRecordedPatterns (double endTick, bool backToSong)
+void Engine::commitRecordedPatterns (double endTick, bool backToSong, bool final)
 {
     for (int b = 0; b < cr::numBanks; ++b)
     {
         if (! recordedInto[(size_t) b]) continue;
-        recordedInto[(size_t) b] = false;
+        if (final) recordedInto[(size_t) b] = false;
         auto& bank = sess.banks[(size_t) b];
         const int pi = bank.workingPattern;
         if (! juce::isPositiveAndBelow (pi, (int) bank.patterns.size()) || bank.patterns[(size_t) pi].notes.empty()) continue;
@@ -501,7 +502,7 @@ void Engine::commitRecordedPatterns (double endTick, bool backToSong)
 
         // after Stop the bank follows the song again, which now has the recording in it
         // (turning Record off while playing keeps the loop going)
-        if (backToSong) bank.source = cr::TrackSource::song;
+        if (final && backToSong) bank.source = cr::TrackSource::song;
     }
 }
 
@@ -858,6 +859,79 @@ int Engine::duplicatePattern (int bank, int pattern)
     copy.name = copy.name + " copy";
     b.patterns.push_back (std::move (copy));
     return (int) b.patterns.size() - 1;
+}
+
+void Engine::copyPattern (int bank, int pattern)
+{
+    const juce::ScopedLock sl (lock);
+    auto& b = sess.banks[(size_t) bank];
+    if (! juce::isPositiveAndBelow (pattern, (int) b.patterns.size())) return;
+    patternClipboard = { b.patterns[(size_t) pattern] };
+}
+
+int Engine::pastePattern (int bank)
+{
+    if (patternClipboard.empty() || ! juce::isPositiveAndBelow (bank, cr::numBanks)) return -1;
+    checkpoint();
+    createBank (bank);
+    const juce::ScopedLock sl (lock);
+    auto& b = sess.banks[(size_t) bank];
+    auto copy = patternClipboard.front();
+    copy.name = copy.name + " copy";
+    b.patterns.push_back (std::move (copy));
+    b.workingPattern = (int) b.patterns.size() - 1;
+    sendChangeMessage();
+    return b.workingPattern;
+}
+
+int Engine::copySongClips()
+{
+    const juce::ScopedLock sl (lock);
+    songClipboard.clear();
+    for (auto& c : sess.song)
+        if (c.selected && juce::isPositiveAndBelow (c.pattern, (int) sess.banks[(size_t) c.bank].patterns.size()))
+            songClipboard.push_back ({ c, sess.banks[(size_t) c.bank].patterns[(size_t) c.pattern] });
+    return (int) songClipboard.size();
+}
+
+int Engine::pasteSongClips (int atTick, int targetBank)
+{
+    if (songClipboard.empty()) return 0;
+    checkpoint();
+    int first = std::numeric_limits<int>::max();
+    for (auto& cc : songClipboard) first = juce::jmin (first, cc.clip.start);
+    if (targetBank >= 0) createBank (targetBank);
+    const juce::ScopedLock sl (lock);
+    for (auto& c : sess.song) c.selected = false;
+    // each distinct source pattern is copied once, so clips that shared a pattern still share the copy
+    std::map<std::pair<int, int>, int> made;
+    int n = 0;
+    for (auto& cc : songClipboard)
+    {
+        const int bank = targetBank >= 0 ? targetBank : cc.clip.bank;
+        if (! sess.banks[(size_t) bank].created) continue;
+        auto& b = sess.banks[(size_t) bank];
+        const auto keyP = std::make_pair (cc.clip.bank, cc.clip.pattern);
+        int pi;
+        if (auto it = made.find (keyP); it != made.end()) pi = it->second;
+        else
+        {
+            auto p = cc.pattern;
+            p.name = p.name + " copy";
+            b.patterns.push_back (std::move (p));
+            pi = (int) b.patterns.size() - 1;
+            made[keyP] = pi;
+        }
+        auto clip = cc.clip;
+        clip.bank = bank;
+        clip.pattern = pi;
+        clip.start = atTick + (cc.clip.start - first);
+        clip.selected = true;
+        sess.song.push_back (clip);
+        ++n;
+    }
+    sendChangeMessage();
+    return n;
 }
 
 void Engine::deletePattern (int bank, int pattern)
@@ -1976,6 +2050,19 @@ void Engine::timerCallback()
     }
     if (samplingDone.load()) finishSampling();
     requestStretches();
+    // While recording, what's been recorded so far shows in the song and the scene grid
+    // straight away (and grows as the recording goes on), not only after Stop.
+    static int liveTick = 0;
+    if (++liveTick % 5 == 0 && recording && playing && ! inPreRoll)
+    {
+        bool any = false;
+        {
+            const juce::ScopedLock sl (lock);
+            for (auto r : recordedInto) any = any || r;
+            if (any) commitRecordedPatterns (position, false, false);
+        }
+        if (any) uiStateChanged = true;
+    }
     if (uiStateChanged.exchange (false)) sendChangeMessage();
 
     static int counter = 0;

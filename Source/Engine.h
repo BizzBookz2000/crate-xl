@@ -332,6 +332,17 @@ public:
     bool pasteBank (int bank, juce::String& error);
     bool hasBankClipboard() const;
     int firstFreeBank() const;   // -1 when all 128 banks are in use
+    int duplicateBank (int bank, juce::String& error);   // copy of pads, samples, settings and patterns in the next free bank; -1 on failure
+
+    // Pattern clipboard (works across banks: pads keep their numbers)
+    void copyPattern (int bank, int pattern);
+    int pastePattern (int bank);                         // new pattern index, -1 when the clipboard is empty
+    bool hasPatternClipboard() const { return ! patternClipboard.empty(); }
+
+    // Sequence clipboard: song clips together with their patterns
+    int copySongClips();                                 // copies the selected song clips; returns how many
+    int pasteSongClips (int atTick, int targetBank);     // targetBank -1 = each clip's own bank; patterns are pasted as new copies
+    bool hasSongClipboard() const { return ! songClipboard.empty(); }
     bool exportPack (const juce::File& file, const juce::String& packName, const juce::String& author, juce::String& error);
     bool installPack (const juce::File& file, juce::String& error);
     bool importMidi (const juce::File& file, int bank, juce::String& error, bool generalMidiMap = false);
@@ -519,7 +530,10 @@ private:
     double position = 0.0, playStartPosition = 0.0, recordStartTick = 0.0;
     std::array<bool, cr::numBanks> recordedInto {};   // banks that got notes during the current recording
     int lastLaunchedScene = 0;
-    void commitRecordedPatterns (double endTick, bool backToSong);
+    std::vector<cr::Pattern> patternClipboard;
+    struct CopiedClip { cr::SongClip clip; cr::Pattern pattern; };
+    std::vector<CopiedClip> songClipboard;
+    void commitRecordedPatterns (double endTick, bool backToSong, bool final = true);
     void growPatternTo (cr::Pattern& pat, double relTick);     // lock held: put what was recorded into the song and scenes
     std::array<double, cr::numBanks> patternOrigin {};
     std::atomic<double> uiPosition { 0.0 };
