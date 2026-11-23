@@ -470,7 +470,7 @@ public:
         zoomOut.onClick = [this] { wave.zoom (0.5); };
         zoomSel.onClick = [this] { wave.zoomToSelection(); };
         zoomFit.onClick = [this] { wave.zoomToFit(); };
-        for (auto* b : { &zoomIn, &zoomOut, &zoomSel, &zoomFit }) addAndMakeVisible (b);
+        for (auto* zb : { &zoomIn, &zoomOut, &zoomSel, &zoomFit }) addAndMakeVisible (zb);
         updateButtons();
         startTimerHz (20);
     }

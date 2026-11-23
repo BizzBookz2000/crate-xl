@@ -248,9 +248,10 @@ public:
         scanBtn.onClick = [this]
         {
             status = "Scanning...";
-            Engine::get().plugins.startScan ([this] (juce::String s, bool done)
+            juce::Component::SafePointer<PluginsPage> safe (this);
+            Engine::get().plugins.startScan ([safe] (juce::String s, bool done)
             {
-                juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<PluginsPage> (this), s, done]
+                juce::MessageManager::callAsync ([safe, s, done]
                 {
                     if (safe == nullptr) return;
                     safe->status = done ? "Scan finished: " + juce::String (Engine::get().plugins.knownPlugins.getNumTypes()) + " plugins" : s;

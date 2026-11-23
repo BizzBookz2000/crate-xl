@@ -1027,16 +1027,16 @@ private:
     void showRepeatMenu (int slot)
     {
         auto& e = Engine::get();
-        static const int ticks[] = { 192, 96, 64, 48, 32, 24, 16, 12, 8, 6 };
+        static const int rateTicks[] = { 192, 96, 64, 48, 32, 24, 16, 12, 8, 6 };
         juce::PopupMenu m;
         m.addSectionHeader ("Repeat rate");
-        for (int i = 0; i < 10; ++i) m.addItem (1 + i, RollPad::rateName (ticks[i]), true, e.repeatTicks[(size_t) slot] == ticks[i]);
+        for (int i = 0; i < 10; ++i) m.addItem (1 + i, RollPad::rateName (rateTicks[i]), true, e.repeatTicks[(size_t) slot] == rateTicks[i]);
         m.addSectionHeader ("Swing");
         for (int sw : { 0, 8, 16, 25, 33, 50 }) m.addItem (100 + sw, juce::String (sw) + "%", true, std::abs (e.repeatSwing[(size_t) slot] * 100.0f - (float) sw) < 0.5f);
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (repeatArrows[slot]), [this, slot] (int r)
         {
             auto& en = Engine::get();
-            if (r >= 1 && r <= 10) en.repeatTicks[(size_t) slot] = ticks[r - 1];
+            if (r >= 1 && r <= 10) en.repeatTicks[(size_t) slot] = rateTicks[r - 1];
             else if (r >= 100) en.repeatSwing[(size_t) slot] = (float) (r - 100) / 100.0f;
             lastRepeatSlot = slot;
             refreshRepeat();

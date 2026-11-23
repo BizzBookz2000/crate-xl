@@ -242,8 +242,6 @@ void Engine::renderVoice (Voice& v, int start, int end)
     if (! juce::isPositiveAndBelow (v.layer, (int) pad.layers.size()) || ! v.sample) { v.active = false; v.sample.reset(); v.stretched.reset(); return; }
     auto& layer = pad.layers[(size_t) v.layer];
     const auto& lp = layer.p;
-    const int n = end - start;
-
     juce::AudioBuffer<float>* bus = nullptr;
     if (layer.hasFx()) bus = getBus (layerBuses, layerBusesUsed, (padKey (v.bank, v.pad)) * 8 + juce::jmin (7, v.layer), curBlock);
     else bus = getBus (padBuses, padBusesUsed, padKey (v.bank, v.pad), curBlock);
