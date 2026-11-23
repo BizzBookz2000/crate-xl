@@ -61,7 +61,9 @@ private:
     IconButton stopBtn { Icon::stopSquare, "Stop (rewinds on second press)" }, playBtn { Icon::play, "Play / pause (Space)", true },
                recBtn { Icon::record, "Record (R)", true }, rewBtn { Icon::rewind, "Previous bar" }, ffBtn { Icon::forward, "Next bar" },
                loopBtn { Icon::loop, "Loop (L)", true };
-    juce::TextButton undoBtn { "Undo" }, redoBtn { "Redo" };
+    juce::TextButton undoBtn { "Undo" }, redoBtn { "Redo" }, midiMapBtn { "MIDI" };
+    std::unique_ptr<juce::Component> midiMap;
+    void setMidiMapMode (bool on);
     juce::Label cpuLabel, statusLabel;
 
     // navigation rail

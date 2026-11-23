@@ -62,7 +62,11 @@ static int scanTimeoutMs()
 
 static void addFormats (juce::AudioPluginFormatManager& fm)
 {
+   #if JUCE_PLUGINHOST_VST3
     fm.addFormat (std::make_unique<juce::VST3PluginFormat>());
+   #else
+    juce::ignoreUnused (fm);
+   #endif
    #if JUCE_PLUGINHOST_AU && JUCE_MAC
     fm.addFormat (std::make_unique<juce::AudioUnitPluginFormat>());
    #endif

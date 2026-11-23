@@ -961,7 +961,7 @@ public:
         if (r == 24)
         {
             auto name = juce::File::createLegalFileName (e.session().audioTracks[(size_t) t].name);
-            chooser = std::make_unique<juce::FileChooser> ("Export the clip as WAV", Engine::getExportsFolder().getChildFile (name + ".wav"), "*.wav");
+            chooser = makeFileChooser ("Export the clip as WAV", Engine::getExportsFolder().getChildFile (name + ".wav"), "*.wav");
             chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [t = t, c = c] (const juce::FileChooser& fc)
             {
                 auto f = fc.getResult();

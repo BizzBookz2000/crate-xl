@@ -262,6 +262,13 @@ int main (int argc, char** argv)
         const auto& notes = e.session().banks[0].patterns[(size_t) pi].notes;
         check (notes.size() == 1, "one note recorded");
         if (! notes.empty()) check (notes[0].start % (cr::ppq / 4) == 0 && notes[0].start == cr::ppq / 2, "start quantised to 1/16 (" + juce::String (notes[0].start) + ")");
+        bool inSong = false;
+        for (auto& c : e.session().song) if (c.bank == 0 && c.pattern == pi && c.start == 0) inSong = true;
+        check (inSong, "the recorded pattern is placed in the song where it was recorded");
+        bool inScene = false;
+        for (auto& sc : e.session().scenes) if (sc.slots[0] == pi) inScene = true;
+        check (inScene, "the recorded pattern is placed in the scene grid");
+        check (e.session().banks[0].source == cr::TrackSource::song, "after stopping, the bank follows the song again");
         e.session().preRollBars = 1;
     }
 

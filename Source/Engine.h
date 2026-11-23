@@ -42,7 +42,9 @@ struct FocusActions
         prevGroup = 111, nextGroup, octaveDown, octaveUp,
         repeat1 = 115,                    // .. + 5
         transportPlay = 121, transportStop, transportRecord, transportTap,
-        numActions = 125
+        transportLoop = 125, transportMetronome, undoAction, redoAction, rewindBar, forwardBar,
+        viewPerformance = 131, viewEditor, viewSequencer, viewMixer,
+        numActions = 135
     };
 
     struct Binding { bool isCC = false; int channel = 1, number = -1; };
@@ -284,10 +286,12 @@ public:
     void unbindMacro (int index, int bindingIndex);
     int findMacroFor (const juce::String& param) const;
     void armMidiLearn (const juce::String& param) { learnTarget = param; learnArmed = true; }
+    void cancelMidiLearn() { learnArmed = false; }
     bool isMidiLearnArmedFor (const juce::String& param) const { return learnArmed && learnTarget == param; }
     void forgetMidiMapping (const juce::String& param);
     bool hasMidiMapping (const juce::String& param) const;
     std::atomic<bool> focusLearnArmed { false };
+    std::function<void (int view)> onShowView;                            // message thread: MIDI-mapped view buttons
     std::function<void (const juce::MidiMessage&)> onFocusLearnMessage;   // message thread
     std::function<void (int note)> onMappingLearnNote;                    // message thread (Mapping page LEARN)
     std::atomic<bool> mappingLearnArmed { false };
@@ -309,6 +313,11 @@ public:
     bool loadSession (const juce::File& file, juce::String& error);
     bool saveBankPreset (int bank, const juce::File& file, juce::String& error, bool savePatterns = true);
     bool loadBankPreset (int bank, const juce::File& file, juce::String& error, bool loadPatterns = true);
+    // Bank clipboard: copy a whole bank (pads, samples, effects, patterns) and paste it over another or into a new one.
+    bool copyBank (int bank, juce::String& error);
+    bool pasteBank (int bank, juce::String& error);
+    bool hasBankClipboard() const;
+    int firstFreeBank() const;   // -1 when all 128 banks are in use
     bool exportPack (const juce::File& file, const juce::String& packName, const juce::String& author, juce::String& error);
     bool installPack (const juce::File& file, juce::String& error);
     bool importMidi (const juce::File& file, int bank, juce::String& error, bool generalMidiMap = false);
@@ -494,6 +503,9 @@ private:
     std::atomic<bool> inPreRoll { false };
     double preRollLeft = 0.0;            // ticks of count-in left
     double position = 0.0, playStartPosition = 0.0, recordStartTick = 0.0;
+    std::array<bool, cr::numBanks> recordedInto {};   // banks that got notes during the current recording
+    int lastLaunchedScene = 0;
+    void commitRecordedPatterns (double endTick, bool backToSong);     // lock held: put what was recorded into the song and scenes
     std::array<double, cr::numBanks> patternOrigin {};
     std::atomic<double> uiPosition { 0.0 };
     std::vector<double> tapTimes;

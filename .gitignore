@@ -3,3 +3,9 @@ build-*/
 dist/
 *.user
 .DS_Store
+JUCE/
+Builds/Android/local.properties
+Builds/Android/.gradle/
+Builds/Android/app/build/
+Builds/Android/app/.cxx/
+Builds/Android/build/

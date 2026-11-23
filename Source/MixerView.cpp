@@ -551,6 +551,9 @@ public:
         addAndMakeVisible (eqBtn);
         addChildComponent (eqPanel);
         eqPanel.onClose = [this] { showEq (false); };
+        // the channel EQ is part of the mixer: open from the start
+        eqBtn.setToggleState (true, juce::dontSendNotification);
+        eqPanel.setVisible (true);
         startTimerHz (30);
     }
 
@@ -702,6 +705,7 @@ private:
         if (! isShowing()) return;
         for (auto* s : strips) s->refreshMeters();
         if (ticks % 6 == 0) for (auto* s : strips) s->refreshEq();
+        if (ticks % 3 == 0) chain.refreshValues();
         if (++ticks % 30 == 0)
             for (int i = 0; i < (int) keys.size(); ++i)
                 if (auto* st = Engine::get().getStrip (keys[(size_t) i])) st->peakHold = st->peakHold.load() * 0.5f;

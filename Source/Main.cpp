@@ -1,4 +1,12 @@
 #include <JuceHeader.h>
+
+// The CMake build defines these; the Android (Projucer) build takes them from ProjectInfo.
+#ifndef JUCE_APPLICATION_NAME_STRING
+ #define JUCE_APPLICATION_NAME_STRING ProjectInfo::projectName
+#endif
+#ifndef JUCE_APPLICATION_VERSION_STRING
+ #define JUCE_APPLICATION_VERSION_STRING ProjectInfo::versionString
+#endif
 #include <set>
 #include "Engine.h"
 #include "MainComponent.h"
@@ -49,6 +57,16 @@ public:
 
         juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
         engine = std::make_unique<Engine>();
+       #if JUCE_ANDROID
+        // Android asks before the microphone / audio inputs can be used for sampling and recording.
+        juce::RuntimePermissions::request (juce::RuntimePermissions::recordAudio, [] (bool granted)
+        {
+            if (granted) Engine::get().requireInputChannels (0, 2);
+        });
+        // Read audio from shared storage (Music, Downloads...) in the file browser.
+        if (! juce::RuntimePermissions::isGranted (juce::RuntimePermissions::readMediaAudio))
+            juce::RuntimePermissions::request (juce::RuntimePermissions::readMediaAudio, [] (bool) {});
+       #endif
         mainWindow = std::make_unique<MainWindow> (getApplicationName());
        #if JUCE_WINDOWS
         styleNativeTitleBar (mainWindow->getWindowHandle());
@@ -107,12 +125,27 @@ public:
         explicit MainWindow (const juce::String& name)
             : DocumentWindow (name, Pal::bg, DocumentWindow::allButtons)
         {
+           #if JUCE_ANDROID
+            // Phones and tablets: full screen, and the whole layout scaled to fit smaller screens
+            // (the layout is designed for at least 1280 x 760 points).
+            if (auto* d = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+            {
+                const auto area = d->userArea;
+                const float scale = juce::jlimit (0.55f, 1.0f, juce::jmin ((float) area.getWidth() / 1280.0f, (float) area.getHeight() / 760.0f));
+                juce::Desktop::getInstance().setGlobalScaleFactor (scale);
+            }
+            setUsingNativeTitleBar (true);
+            setContentOwned (new MainComponent(), true);
+            setFullScreen (true);
+            setVisible (true);
+           #else
             setUsingNativeTitleBar (true);
             setContentOwned (new MainComponent(), true);
             setResizable (true, true);
             setResizeLimits (1100, 700, 10000, 10000);
             centreWithSize (juce::jmin (1440, getParentWidth() - 40), juce::jmin (900, getParentHeight() - 60));
             setVisible (true);
+           #endif
         }
         void closeButtonPressed() override { JUCEApplication::getInstance()->systemRequestedQuit(); }
     };

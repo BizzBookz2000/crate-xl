@@ -326,7 +326,7 @@ public:
 private:
     void chooseFile()
     {
-        chooser = std::make_unique<juce::FileChooser> ("Export audio", Engine::getExportsFolder().getChildFile ("Mixdown.wav"), "*.wav");
+        chooser = makeFileChooser ("Export audio", Engine::getExportsFolder().getChildFile ("Mixdown.wav"), "*.wav");
         Engine::getExportsFolder().createDirectory();
         chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this] (const juce::FileChooser& fc)
         {

@@ -28,6 +28,24 @@ For ASIO drivers, set `ASIO_SDK=C:\path\to\asiosdk` before running the script. T
 
 You get a universal app (Apple Silicon + Intel) in `dist/`, ad-hoc signed so it runs on the Mac that built it.
 
+### Android: `build-android.bat` (Windows) or `build-android.sh` (Mac / Linux)
+
+1. Install **Android Studio** (https://developer.android.com/studio) and open it once, so it sets up the Android SDK.
+2. Install **Git**.
+3. Run `build-android.bat` (Windows) or `build-android.sh` (Mac / Linux).
+
+The script downloads JUCE into `JUCE/`. Gradle then downloads the Android NDK and its own tools. The first build takes 15-30 minutes. The APK ends up in `dist/Crate XL.apk`. Copy it to the device and open it to install, or use `adb install -r "dist/Crate XL.apk"`.
+
+You can also open `Builds/Android` in Android Studio (after the script has downloaded JUCE once) and use **Build → Build APK(s)**, or run it on a connected device.
+
+About the Android version:
+
+- It's built for tablets in landscape. On phones the whole layout is scaled down to fit.
+- Plugin hosting (VST3 / AU) is desktop-only.
+- Audio uses Oboe (low latency). USB and Bluetooth MIDI controllers work.
+- Files live in the app's own `Crate XL` folder. Use the built-in file browser to load audio from Music / Downloads.
+- `CrateXL.jucer` is the source of the Android project. If you add source files, re-save it in the Projucer (it comes with JUCE) to update `Builds/Android`.
+
 ### Renaming the app
 
 The name is set in one place, at the top of `CMakeLists.txt`:
@@ -59,6 +77,8 @@ You can also pass `-DCRATE_PRODUCT_NAME="My Name"` when configuring. The build s
 
 ### Editor view
 
+- The **Banks** button (the pads icon next to the bank name) picks a bank (any of the 128). It also makes a new bank, duplicates the current one, copies a bank and pastes it over another or into a new one, renames, clears or deletes.
+
 - Pad selector, channel settings (volume, pan, sends, choke group, link group, pad note, keys mode, output, MIDI setup), and the layers & samples list.
 - **Sampler** page:
   - Zoomable waveform with start / end / loop markers, zero-crossing snap and loop crossfade.
@@ -79,6 +99,7 @@ You can also pass `-DCRATE_PRODUCT_NAME="My Name"` when configuring. The build s
 
 - **Song**: arranger with bank tracks and audio tracks, plus loop markers in the ruler. Draw, move, resize, split, duplicate and repeat clips. Drag the pattern chip onto the timeline. Each track can follow the song or play its own pattern. There are track automation lanes, and you can drop audio files onto the timeline.
 - **Scenes**: a pattern grid per track; launches quantised to 1 beat, or 1/2/4/8 bars. Capture, duplicate, rename, reorder, and paste a scene to the end of the song.
+- **Recording puts the pattern in place**: when you stop, what you recorded appears on the bank's song track, at the spot where you recorded it and as long as it played (in whole loops). It also goes into the scene grid (the last scene you launched, or the next free one). The pattern chip at the bottom still works for dragging copies anywhere. Turning Record off while playing keeps the loop going, so you can keep overdubbing.
 - **Pattern**: piano roll for pads and for keys-mode pads (128 keys). Tools: select, draw and paint. Quantize with swing, a velocity lane, copy/paste, double the pattern, and pattern automation lanes.
 
 ### Mixer view
@@ -131,6 +152,13 @@ You can also pass `-DCRATE_PRODUCT_NAME="My Name"` when configuring. The build s
 Settings → Plugins → **Scan for plugins**. Each plugin is loaded in a separate helper process (the app starts a copy of itself in the background). If a plugin crashes or stops responding for 90 seconds, it's marked **Failed** with the reason, and the scan moves on to the next one. The app itself never goes down. You can stop a scan part-way, and **Retry failed plugins** clears the failed list so the next scan tries them again.
 
 ### MIDI
+
+- **MIDI map mode**: press the **MIDI** button in the top bar (or Ctrl/Cmd + Shift + M).
+  - Every control you can map lights up and shows its current mapping. That covers knobs and faders, pads, mode buttons, note-repeat buttons, the view buttons, and the transport: play, stop, record, previous/next bar, loop, undo and redo.
+  - Click one, then move or press the control on your keyboard or controller.
+  - Right-click a control to remove its mapping. Esc or the MIDI button finishes.
+  - Mappings are saved: knob mappings with the session, button mappings with the app settings.
+- Effect cards for the Filter and 6-Band EQ show their frequency response, live as you turn them, and the channel EQ graph shows them too.
 
 - MIDI learn on any knob: right-click it. You can also assign any knob to one of the 16 macros or add an automation lane for it.
 - **MIDI focus actions**: map a controller's pads to the on-screen pads (or notes in keys mode), and its buttons and knobs to modes, banks, bank groups, octave, note repeat, macros and transport.

@@ -630,7 +630,7 @@ private:
             auto& e = Engine::get();
             if (r >= 1 && r <= 3)
             {
-                chooser = std::make_unique<juce::FileChooser> ("Choose a sample", Engine::getSamplesFolder(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+                chooser = makeFileChooser ("Choose a sample", Engine::getSamplesFolder(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
                 chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [b, p, l, z, r] (const juce::FileChooser& fc)
                 {
                     auto f = fc.getResult();
@@ -1397,7 +1397,7 @@ class EditorView : public ViewBase, public juce::FileDragAndDropTarget, public j
 public:
     EditorView()
     {
-        bankMenuBtn.onClick = [] { Nav::showView (Nav::performance); };
+        bankMenuBtn.onClick = [this] { showBanksMenu (&bankMenuBtn); };
         addAndMakeVisible (bankMenuBtn);
         miniPads.onMenu = [this] { padMenu(); };
         addAndMakeVisible (miniPads);
@@ -1442,7 +1442,7 @@ public:
         addLayerBtn.onClick = [] { auto& e = Engine::get(); e.checkpointPad (selBank(), selPad()); e.selectedLayer = e.addLayer (selBank(), selPad()); ViewBase::broadcast(); };
         loadBtn.onClick = [this]
         {
-            chooser = std::make_unique<juce::FileChooser> ("Load samples", Engine::getSamplesFolder(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+            chooser = makeFileChooser ("Load samples", Engine::getSamplesFolder(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
             chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectMultipleItems,
                                   [] (const juce::FileChooser& fc)
                                   {
@@ -1712,7 +1712,7 @@ private:
     }
     void handleNoteOff (juce::MidiKeyboardState*, int, int note, float) override { Engine::get().padUp (selBank(), selPad(), note); }
 
-    IconButton bankMenuBtn { Icon::pads, "Back to the pads" }, padMenuBtn { Icon::dots, "Pad options" };
+    IconButton bankMenuBtn { Icon::pads, "Banks: choose, new, copy, paste" }, padMenuBtn { Icon::dots, "Pad options" };
     MiniPads miniPads;
     IconButton padPrev { Icon::down, "Previous 16 pads" }, padNext { Icon::up, "Next 16 pads" };
     TabStrip leftTabs, pageTabs;

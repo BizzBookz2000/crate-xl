@@ -3,7 +3,7 @@
 #include "FileUtils.h"
 
 #ifndef JUCE_APPLICATION_VERSION_STRING
- #define JUCE_APPLICATION_VERSION_STRING "dev"
+ #define JUCE_APPLICATION_VERSION_STRING "1.2"
 #endif
 
 using juce::var;
@@ -993,6 +993,41 @@ bool Engine::loadBankPreset (int b, const juce::File& file, juce::String& error,
     if (! ser.missingSamples.isEmpty()) error = "Missing samples: " + ser.missingSamples.joinIntoString (", ");
     sendChangeMessage();
     return true;
+}
+
+static juce::File bankClipboardFile()
+{
+    return juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("CrateXL_BankClipboard").getChildFile ("Bank.crbank");
+}
+
+bool Engine::copyBank (int b, juce::String& error)
+{
+    if (! juce::isPositiveAndBelow (b, cr::numBanks) || ! sess.banks[(size_t) b].created) { error = "That bank is empty."; return false; }
+    auto f = bankClipboardFile();
+    f.getParentDirectory().deleteRecursively();
+    return saveBankPreset (b, f, error, true);
+}
+
+bool Engine::hasBankClipboard() const { return bankClipboardFile().existsAsFile(); }
+
+bool Engine::pasteBank (int b, juce::String& error)
+{
+    if (! hasBankClipboard()) { error = "Copy a bank first."; return false; }
+    checkpoint();
+    createBank (b);
+    const auto keepName = sess.banks[(size_t) b].name;
+    if (! loadBankPreset (b, bankClipboardFile(), error, true)) return false;
+    juce::ignoreUnused (keepName);
+    sess.banks[(size_t) b].name << " copy";
+    sess.banks[(size_t) b].strip.name = sess.banks[(size_t) b].name;
+    sendChangeMessage();
+    return true;
+}
+
+int Engine::firstFreeBank() const
+{
+    for (int b = 0; b < cr::numBanks; ++b) if (! sess.banks[(size_t) b].created) return b;
+    return -1;
 }
 
 // ============================================================================

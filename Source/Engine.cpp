@@ -411,6 +411,7 @@ void Engine::stop()
     {
         const juce::ScopedLock sl (lock);
         const bool wasPlaying = playing;
+        if (recording) commitRecordedPatterns (position, true);
         playing = false;
         recording = false;
         inPreRoll = false;
@@ -441,6 +442,69 @@ void Engine::stop()
     sendChangeMessage();
 }
 
+// When a recording ends, what was recorded appears on its own: the pattern is placed in the
+// song at the spot it was recorded (as long as it played, in whole loops) and in the scene grid.
+// The pattern chip at the bottom still works for dragging copies anywhere.
+void Engine::commitRecordedPatterns (double endTick, bool backToSong)
+{
+    for (int b = 0; b < cr::numBanks; ++b)
+    {
+        if (! recordedInto[(size_t) b]) continue;
+        recordedInto[(size_t) b] = false;
+        auto& bank = sess.banks[(size_t) b];
+        const int pi = bank.workingPattern;
+        if (! juce::isPositiveAndBelow (pi, (int) bank.patterns.size()) || bank.patterns[(size_t) pi].notes.empty()) continue;
+        const int L = juce::jmax (1, (int) bank.patterns[(size_t) pi].lengthTicks());
+        const int start = juce::jmax (0, (int) std::round (patternOrigin[(size_t) b]));
+        const double played = juce::jmax (0.0, endTick - start);
+        const int loops = juce::jmax (1, (int) std::ceil (played / L - 0.02));
+        const int end = start + loops * L;
+
+        // song: make room on this bank's track, then add the clip
+        auto& song = sess.song;
+        bool covered = false;
+        for (auto& c : song)
+            if (c.bank == b && c.pattern == pi && c.start <= start && c.start + c.length >= end) covered = true;
+        if (! covered)
+        {
+            std::vector<cr::SongClip> keep;
+            for (auto c : song)
+            {
+                if (c.bank != b || c.start + c.length <= start || c.start >= end) { keep.push_back (c); continue; }
+                if (c.start < start) { auto head = c; head.length = start - c.start; keep.push_back (head); }
+                if (c.start + c.length > end) { auto tail = c; tail.offset += end - c.start; tail.length = c.start + c.length - end; tail.start = end; keep.push_back (tail); }
+            }
+            cr::SongClip clip;
+            clip.bank = b; clip.pattern = pi; clip.start = start; clip.length = end - start;
+            keep.push_back (clip);
+            song = std::move (keep);
+        }
+
+        // scenes: the scene last launched gets it, unless that slot already holds another pattern
+        if (sess.scenes.empty()) { cr::Scene sc; sc.name = "Scene 1"; sess.scenes.push_back (sc); }
+        int target = juce::jlimit (0, (int) sess.scenes.size() - 1, lastLaunchedScene);
+        auto& slot = sess.scenes[(size_t) target].slots[(size_t) b];
+        if (slot >= 0 && slot != pi)
+        {
+            target = -1;
+            for (int i = 0; i < (int) sess.scenes.size(); ++i)
+                if (sess.scenes[(size_t) i].slots[(size_t) b] == pi || sess.scenes[(size_t) i].slots[(size_t) b] < 0) { target = i; break; }
+            if (target < 0 && sess.scenes.size() < 64)
+            {
+                cr::Scene sc;
+                sc.name = "Scene " + juce::String ((int) sess.scenes.size() + 1);
+                sess.scenes.push_back (sc);
+                target = (int) sess.scenes.size() - 1;
+            }
+        }
+        if (target >= 0) sess.scenes[(size_t) target].slots[(size_t) b] = pi;
+
+        // after Stop the bank follows the song again, which now has the recording in it
+        // (turning Record off while playing keeps the loop going)
+        if (backToSong) bank.source = cr::TrackSource::song;
+    }
+}
+
 void Engine::setRecording (bool shouldRecord)
 {
     if (shouldRecord)
@@ -453,6 +517,7 @@ void Engine::setRecording (bool shouldRecord)
             createBank (b);
             auto& bank = sess.banks[(size_t) b];
             recordStartTick = position;
+            recordedInto.fill (false);
             // the working track takes over: it loops its working pattern while recording,
             // unless audio tracks are armed (they record along the song)
             bool anyAudioArmed = false;
@@ -506,6 +571,7 @@ void Engine::setRecording (bool shouldRecord)
         bool finishAudio = false;
         {
             const juce::ScopedLock sl (lock);
+            if (recording) commitRecordedPatterns (position, false);
             recording = false;
             inPreRoll = false;
             preRollLeft = 0.0;
@@ -708,6 +774,7 @@ void Engine::launchScene (int scene)
     {
         const juce::ScopedLock sl (lock);
         if (! juce::isPositiveAndBelow (scene, (int) sess.scenes.size())) return;
+        lastLaunchedScene = scene;
         const auto& sc = sess.scenes[(size_t) scene];
         for (int b = 0; b < cr::numBanks; ++b)
         {

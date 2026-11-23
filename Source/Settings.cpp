@@ -268,7 +268,7 @@ public:
         };
         addBtn.onClick = [this]
         {
-            chooser = std::make_unique<juce::FileChooser> ("Add a plugin folder", juce::File::getSpecialLocation (juce::File::userHomeDirectory));
+            chooser = makeFileChooser ("Add a plugin folder", juce::File::getSpecialLocation (juce::File::userHomeDirectory));
             chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this] (const juce::FileChooser& fc)
             {
                 if (fc.getResult().isDirectory()) { Engine::get().plugins.addSearchFolder (fc.getResult()); saveAppSettings(); repaint(); }

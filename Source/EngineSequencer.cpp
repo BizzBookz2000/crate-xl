@@ -190,6 +190,7 @@ void Engine::handleLiveEvent (const LiveEvent& le, int offset, double tick)
         if (pat.notes.size() < 100000)
         {
             pat.notes.push_back (note);
+            recordedInto[(size_t) b] = true;
             if (pendingRecords.size() < pendingRecords.capacity())
                 pendingRecords.push_back ({ b, p, le.key, (int) pat.notes.size() - 1, bank.workingPattern, tick });
         }

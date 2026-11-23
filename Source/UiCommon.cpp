@@ -604,7 +604,7 @@ void EffectCard::setTarget (cr::InsertSlot* s, const juce::String& b, int idx, j
                 c->accent = a;
                 const juce::String path = base + juce::String (i);
                 c->getIndex = [this, i] { return slot && slot->builtin ? slot->builtin->getChoice (i) : 0; };
-                c->setIndex = [path] (int v) { Engine::get().setParamValue (cr::ParamAddress::parse (path), (float) v, true); };
+                c->setIndex = [this, path] (int v) { Engine::get().setParamValue (cr::ParamAddress::parse (path), (float) v, true); repaint(); };
                 addAndMakeVisible (c);
             }
             else
@@ -613,6 +613,7 @@ void EffectCard::setTarget (cr::InsertSlot* s, const juce::String& b, int idx, j
                 k->setCompact (true);
                 k->setAccent (a);
                 k->setParam (base + juce::String (i));
+                k->onUserChange = [this] { repaint (graphArea); };
                 addAndMakeVisible (k);
             }
         }
@@ -633,12 +634,65 @@ void EffectCard::setTarget (cr::InsertSlot* s, const juce::String& b, int idx, j
     repaint();
 }
 
+bool EffectCard::hasGraph() const
+{
+    return slot != nullptr && slot->builtin != nullptr && slot->builtin->hasFrequencyResponse();
+}
+
 int EffectCard::getPreferredHeight (int width) const
 {
     const int perRow = juce::jmax (1, (width - 16) / 64);
     const int items = knobs.size() + choices.size();
     const int rows = (items + perRow - 1) / perRow;
-    return 36 + rows * 62 + (openBtn.isVisible() ? 30 : 0) + 8;
+    return 36 + (hasGraph() ? 104 : 0) + rows * 62 + (openBtn.isVisible() ? 30 : 0) + 8;
+}
+
+// Frequency response of a filter / EQ insert: log 20 Hz - 20 kHz, +-24 dB, live as you turn it.
+void EffectCard::paintResponse (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    g.setColour (Pal::bg);
+    g.fillRoundedRectangle (r, 4.0f);
+    auto plot = r.reduced (4.0f, 4.0f).withTrimmedBottom (10.0f);
+    const double lo = 20.0, hi = 20000.0;
+    auto xOf = [&plot, lo, hi] (double f) { return plot.getX() + plot.getWidth() * (float) (std::log (f / lo) / std::log (hi / lo)); };
+    auto fOf = [&plot, lo, hi] (float x) { return lo * std::pow (hi / lo, (double) ((x - plot.getX()) / plot.getWidth())); };
+    auto yOf = [&plot] (double db) { return plot.getCentreY() - (float) (juce::jlimit (-24.0, 24.0, db) / 24.0) * plot.getHeight() * 0.5f; };
+    g.setFont (Fonts::ui (8.5f));
+    for (double f : { 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0 })
+    {
+        g.setColour (Pal::outline.withAlpha (0.7f));
+        g.fillRect (xOf (f), plot.getY(), 1.0f, plot.getHeight());
+        if (f == 100.0 || f == 1000.0 || f == 10000.0)
+        {
+            g.setColour (Pal::textFaint);
+            g.drawText (f >= 1000.0 ? juce::String ((int) (f / 1000)) + "k" : juce::String ((int) f), juce::Rectangle<float> (xOf (f) - 14.0f, plot.getBottom() + 1.0f, 28.0f, 9.0f), juce::Justification::centred);
+        }
+    }
+    for (int db : { -12, 0, 12 })
+    {
+        g.setColour (db == 0 ? Pal::line : Pal::outline.withAlpha (0.5f));
+        g.fillRect (plot.getX(), yOf (db), plot.getWidth(), 1.0f);
+    }
+    if (! hasGraph()) return;
+    const double sr = juce::jmax (22050.0, Engine::get().getSampleRate());
+    auto* fx = slot->builtin.get();
+    juce::Path p;
+    for (float x = plot.getX(); x <= plot.getRight(); x += 1.5f)
+    {
+        const float y = yOf (fx->getResponseDb (fOf (x), sr));
+        if (x == plot.getX()) p.startNewSubPath (x, y); else p.lineTo (x, y);
+    }
+    juce::Path fill (p);
+    fill.lineTo (plot.getRight(), plot.getBottom());
+    fill.lineTo (plot.getX(), plot.getBottom());
+    fill.closeSubPath();
+    const auto c = slot->bypass ? Pal::textFaint : accent;
+    juce::Graphics::ScopedSaveState ss (g);
+    g.reduceClipRegion (plot.toNearestInt());
+    g.setColour (c.withAlpha (0.18f));
+    g.fillPath (fill);
+    g.setColour (c);
+    g.strokePath (p, juce::PathStrokeType (1.6f));
 }
 
 void EffectCard::paint (juce::Graphics& g)
@@ -651,6 +705,7 @@ void EffectCard::paint (juce::Graphics& g)
     g.setColour (slot && ! slot->bypass ? Pal::text : Pal::textFaint);
     g.setFont (Fonts::ui (13.0f, true));
     g.drawFittedText (slot ? slot->getName() : juce::String ("Empty"), juce::Rectangle<int> (38, 6, getWidth() - 76, 22), juce::Justification::centredLeft, 1);
+    if (hasGraph()) paintResponse (g, graphArea.toFloat());
 }
 
 void EffectCard::resized()
@@ -660,6 +715,8 @@ void EffectCard::resized()
     power.setBounds (top.removeFromLeft (24));
     menuBtn.setBounds (top.removeFromRight (24));
     r.removeFromTop (4);
+    graphArea = {};
+    if (hasGraph()) { graphArea = r.removeFromTop (98); r.removeFromTop (6); }
     if (openBtn.isVisible()) { openBtn.setBounds (r.removeFromTop (26).withWidth (juce::jmin (160, r.getWidth()))); r.removeFromTop (4); }
     const int perRow = juce::jmax (1, r.getWidth() / 64);
     const int w = r.getWidth() / perRow;
@@ -679,6 +736,7 @@ void EffectCard::refreshValues()
     for (auto* k : knobs) k->refreshValue();
     for (auto* c : choices) c->repaint();
     power.setToggleState (slot && ! slot->bypass, juce::dontSendNotification);
+    if (hasGraph()) repaint (graphArea);
 }
 
 InsertChainView::InsertChainView()
@@ -1058,6 +1116,73 @@ juce::String liveSourceName (int source)
         return cr::bankLetter (k / cr::numPads) + "." + juce::String (k % cr::numPads + 1) + (pad.name.isNotEmpty() ? " " + pad.name : juce::String());
     }
     return {};
+}
+
+static const juce::Identifier midiActionId ("crMidiAction");
+void setMidiAction (juce::Component& c, int action) { c.getProperties().set (midiActionId, action); }
+int getMidiAction (const juce::Component& c) { return c.getProperties().getWithDefault (midiActionId, -1); }
+
+// ============================================================================
+// Banks menu (Editor header): pick, create, duplicate, copy / paste banks
+// ============================================================================
+void showBanksMenu (juce::Component* target)
+{
+    auto& e = Engine::get();
+    auto& s = e.session();
+    const int cur = e.selectedBank;
+    juce::PopupMenu m;
+    m.addSectionHeader ("Banks");
+    juce::PopupMenu all;
+    int created = 0;
+    for (int g = 0; g < cr::numBanks / 8; ++g)
+    {
+        juce::PopupMenu group;
+        bool any = false;
+        for (int i = 0; i < 8; ++i)
+        {
+            const int b = g * 8 + i;
+            const auto& bk = s.banks[(size_t) b];
+            if (bk.created) { any = true; ++created; }
+            group.addItem (1000 + b, cr::bankLetter (b) + "  " + (bk.created ? bk.name : juce::String ("(empty)")), true, b == cur);
+        }
+        all.addSubMenu ("Group " + juce::String (g + 1) + (any ? "  *" : ""), group, true, nullptr, g == cur / 8);
+    }
+    for (int b = 0; b < cr::numBanks; ++b)
+        if (s.banks[(size_t) b].created)
+            m.addItem (1000 + b, cr::bankLetter (b) + "  " + s.banks[(size_t) b].name, true, b == cur);
+    m.addSubMenu ("All 128 banks", all);
+    m.addSeparator();
+    const int freeBank = e.firstFreeBank();
+    m.addItem (1, "New bank", freeBank >= 0);
+    m.addItem (2, "Duplicate " + s.banks[(size_t) cur].name + " to a new bank", freeBank >= 0 && s.banks[(size_t) cur].created);
+    m.addSeparator();
+    m.addItem (3, "Copy bank", s.banks[(size_t) cur].created);
+    m.addItem (4, "Paste over " + s.banks[(size_t) cur].name, e.hasBankClipboard());
+    m.addItem (5, "Paste as a new bank", e.hasBankClipboard() && freeBank >= 0);
+    m.addSeparator();
+    m.addItem (6, "Rename bank...");
+    m.addItem (7, "Clear all pads in this bank");
+    m.addItem (8, "Delete bank", s.banks[(size_t) cur].created);
+    juce::ignoreUnused (created);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [] (int r)
+    {
+        auto& en = Engine::get();
+        auto& ss = en.session();
+        const int b = en.selectedBank;
+        juce::String err;
+        auto go = [&en] (int bank) { en.createBank (bank); en.selectedBank = bank; en.selectedPad = 0; };
+        if (r >= 1000) go (r - 1000);
+        else if (r == 1) { const int f = en.firstFreeBank(); if (f >= 0) { en.checkpoint(); go (f); } }
+        else if (r == 2) { if (en.copyBank (b, err)) { const int f = en.firstFreeBank(); if (f >= 0 && en.pasteBank (f, err)) go (f); } }
+        else if (r == 3) { if (en.copyBank (b, err)) Nav::setStatus ("Copied " + ss.banks[(size_t) b].name); }
+        else if (r == 4) en.pasteBank (b, err);
+        else if (r == 5) { const int f = en.firstFreeBank(); if (f >= 0 && en.pasteBank (f, err)) go (f); }
+        else if (r == 6) askForText ("Bank name", ss.banks[(size_t) b].name, [b] (const juce::String& n) { auto& bk = Engine::get().session().banks[(size_t) b]; bk.name = n; bk.strip.name = n; ViewBase::broadcast(); });
+        else if (r == 7) { for (int p = 0; p < cr::numPads; ++p) if (ss.banks[(size_t) b].pads[(size_t) p].hasSound()) en.clearPad (b, p); }
+        else if (r == 8) { en.checkpoint(); en.deleteBank (b); }
+        if (err.isNotEmpty()) showError ("Banks", err);
+        ViewBase::broadcast();
+    });
 }
 
 void importStems (const juce::StringArray& files, int originTick)

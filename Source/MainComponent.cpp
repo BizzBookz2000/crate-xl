@@ -293,6 +293,169 @@ private:
 };
 
 // ============================================================================
+// ============================================================================
+// MIDI map mode: every mappable control is outlined with its current mapping. Click one,
+// then move or press a control on the MIDI controller. Right-click removes a mapping.
+// ============================================================================
+class MidiMapOverlay : public juce::Component, private juce::Timer
+{
+public:
+    explicit MidiMapOverlay (juce::Component& rootComp) : root (rootComp)
+    {
+        setWantsKeyboardFocus (false);
+        startTimerHz (12);
+    }
+    ~MidiMapOverlay() override { disarm(); }
+    std::function<void()> onExit;
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colours::black.withAlpha (0.28f));
+        collect();
+        auto& e = Engine::get();
+        const float pulse = 0.5f + 0.5f * std::sin ((float) juce::Time::getMillisecondCounter() * 0.008f);
+        for (auto& t : targets)
+        {
+            const auto r = t.area.toFloat().reduced (1.0f);
+            const bool armed = (t.param.isNotEmpty() && t.param == armedParam) || (t.action >= 0 && t.action == armedAction);
+            const auto label = mappingText (t);
+            g.setColour (armed ? Pal::rec.withAlpha (0.25f + 0.25f * pulse) : (label.isNotEmpty() ? Pal::accent.withAlpha (0.16f) : Pal::info.withAlpha (0.08f)));
+            g.fillRoundedRectangle (r, 4.0f);
+            g.setColour (armed ? Pal::rec : (label.isNotEmpty() ? Pal::accent : Pal::info.withAlpha (0.7f)));
+            g.drawRoundedRectangle (r, 4.0f, armed ? 2.0f : 1.0f);
+            if (label.isNotEmpty() || armed)
+            {
+                const auto text = armed ? juce::String ("waiting...") : label;
+                g.setFont (Fonts::heavy (9.0f));
+                const float w = juce::jmin (r.getWidth(), (float) juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), text) + 10.0f);
+                auto pill = juce::Rectangle<float> (w, 14.0f).withCentre ({ r.getCentreX(), r.getBottom() - 9.0f });
+                g.setColour (armed ? Pal::rec : Pal::accent);
+                g.fillRoundedRectangle (pill, 3.0f);
+                g.setColour (Pal::bg);
+                g.drawText (text, pill, juce::Justification::centred, true);
+            }
+        }
+        // banner
+        auto banner = getLocalBounds().removeFromBottom (46).reduced (getWidth() / 5, 6).toFloat();
+        g.setColour (Pal::surface2);
+        g.fillRoundedRectangle (banner, 8.0f);
+        g.setColour (Pal::rec);
+        g.drawRoundedRectangle (banner, 8.0f, 1.5f);
+        g.setColour (Pal::text);
+        g.setFont (Fonts::ui (13.0f, true));
+        juce::String msg;
+        if (armedParam.isNotEmpty()) msg = "Turn a knob or move a fader on your controller for: " + e.getParamDisplayName (armedParam);
+        else if (armedAction >= 0) msg = "Press a pad, key or button on your controller for: " + FocusActions::actionName (armedAction);
+        else msg = "MIDI MAP: click a control, then move or press it on your controller.  Right-click removes.  Esc to finish.";
+        g.drawFittedText (msg, banner.toNearestInt().reduced (12, 0), juce::Justification::centred, 1);
+    }
+
+    void mouseDown (const juce::MouseEvent& ev) override
+    {
+        collect();
+        const Target* hit = nullptr;
+        for (auto& t : targets)
+            if (t.area.contains (ev.getPosition()) && (hit == nullptr || t.area.getWidth() * t.area.getHeight() < hit->area.getWidth() * hit->area.getHeight()))
+                hit = &t;
+        if (hit == nullptr) { disarm(); repaint(); return; }
+        auto& e = Engine::get();
+        if (ev.mods.isPopupMenu())
+        {
+            if (hit->param.isNotEmpty()) e.forgetMidiMapping (hit->param);
+            else { e.focus.bindings[(size_t) hit->action] = {}; e.rebuildMidiTables(); saveAppSettings(); }
+            disarm();
+            repaint();
+            return;
+        }
+        disarm();
+        if (hit->param.isNotEmpty())
+        {
+            armedParam = hit->param;
+            e.armMidiLearn (armedParam);
+        }
+        else
+        {
+            armedAction = hit->action;
+            e.focusLearnArmed = true;
+            juce::Component::SafePointer<MidiMapOverlay> safe (this);
+            e.onFocusLearnMessage = [safe] (const juce::MidiMessage& m)
+            {
+                if (safe == nullptr || safe->armedAction < 0) return;
+                auto& en = Engine::get();
+                auto& b = en.focus.bindings[(size_t) safe->armedAction];
+                b.isCC = m.isController();
+                b.channel = m.getChannel();
+                b.number = b.isCC ? m.getControllerNumber() : m.getNoteNumber();
+                en.rebuildMidiTables();
+                saveAppSettings();
+                safe->disarm();
+                safe->repaint();
+            };
+        }
+        repaint();
+    }
+
+    void disarm()
+    {
+        auto& e = Engine::get();
+        if (armedParam.isNotEmpty() && e.isMidiLearnArmedFor (armedParam)) e.cancelMidiLearn();
+        armedParam.clear();
+        if (armedAction >= 0) { e.focusLearnArmed = false; e.onFocusLearnMessage = nullptr; }
+        armedAction = -1;
+    }
+
+private:
+    struct Target { juce::Rectangle<int> area; juce::String param; int action = -1; };
+
+    void timerCallback() override
+    {
+        // a knob that has just been learned: the engine disarms itself
+        if (armedParam.isNotEmpty() && ! Engine::get().isMidiLearnArmedFor (armedParam)) armedParam.clear();
+        repaint();
+    }
+
+    void collect()
+    {
+        targets.clear();
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (child == this || ! child->isVisible() || child->getWidth() < 4) continue;
+                Target t;
+                if (auto* k = dynamic_cast<Knob*> (child)) t.param = k->getParamPath();
+                if (t.param.isEmpty()) t.action = getMidiAction (*child);
+                if (t.param.isNotEmpty() || t.action >= 0)
+                {
+                    t.area = getLocalArea (child, child->getLocalBounds()).getIntersection (getLocalBounds());
+                    if (! t.area.isEmpty()) targets.push_back (t);
+                }
+                walk (*child);
+            }
+        };
+        walk (root);
+    }
+
+    juce::String mappingText (const Target& t) const
+    {
+        auto& e = Engine::get();
+        if (t.param.isNotEmpty())
+        {
+            for (auto& m : e.session().midiMappings)
+                if (m.param == t.param) return "CC " + juce::String (m.controller) + (m.channel != 1 ? " ch" + juce::String (m.channel) : juce::String());
+            return {};
+        }
+        const auto& b = e.focus.bindings[(size_t) t.action];
+        if (b.number < 0) return {};
+        return (b.isCC ? "CC " + juce::String (b.number) : juce::MidiMessage::getMidiNoteName (b.number, true, true, 3)) + (b.channel != 1 ? " ch" + juce::String (b.channel) : juce::String());
+    }
+
+    juce::Component& root;
+    std::vector<Target> targets;
+    juce::String armedParam;
+    int armedAction = -1;
+};
+
 MainComponent::MainComponent()
 {
     instance = this;
@@ -321,6 +484,21 @@ MainComponent::MainComponent()
     loopBtn.onClick = [] { auto& s = Engine::get().session(); s.loopOn = ! s.loopOn; ViewBase::broadcast(); };
     undoBtn.onClick = [] { if (Engine::get().undo()) ViewBase::broadcast(); };
     redoBtn.onClick = [] { if (Engine::get().redo()) ViewBase::broadcast(); };
+    using FA = FocusActions;
+    setMidiAction (playBtn, FA::transportPlay);
+    setMidiAction (stopBtn, FA::transportStop);
+    setMidiAction (recBtn, FA::transportRecord);
+    setMidiAction (rewBtn, FA::rewindBar);
+    setMidiAction (ffBtn, FA::forwardBar);
+    setMidiAction (loopBtn, FA::transportLoop);
+    setMidiAction (undoBtn, FA::undoAction);
+    setMidiAction (redoBtn, FA::redoAction);
+    midiMapBtn.setClickingTogglesState (true);
+    midiMapBtn.setTooltip ("MIDI map: click any control, then move or press it on your controller (Ctrl/Cmd + Shift + M)");
+    midiMapBtn.setColour (juce::TextButton::buttonOnColourId, Pal::rec);
+    midiMapBtn.onClick = [this] { setMidiMapMode (midiMapBtn.getToggleState()); };
+    addAndMakeVisible (midiMapBtn);
+    Engine::get().onShowView = [this] (int v) { showView (v); };
     undoBtn.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
     redoBtn.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (undoBtn);
@@ -340,6 +518,7 @@ MainComponent::MainComponent()
     {
         auto* b = navButtons.add (new IconButton (nav[i].first, nav[i].second));
         b->onClick = [this, i] { showView (i); };
+        setMidiAction (*b, FocusActions::viewPerformance + i);
         addAndMakeVisible (b);
     }
     const std::pair<Icon, const char*> pan[] = { { Icon::browser, "Browser (B)" }, { Icon::fx, "Effects panel (X)" },
@@ -444,6 +623,9 @@ void MainComponent::resized()
     auto right = t.removeFromRight (juce::jmin (300, t.getWidth() / 3));
     redoBtn.setBounds (right.removeFromRight (56).reduced (0, 6));
     undoBtn.setBounds (right.removeFromRight (56).reduced (0, 6));
+    right.removeFromRight (6);
+    midiMapBtn.setBounds (right.removeFromRight (64).reduced (0, 6));
+    if (midiMap) midiMap->setBounds (getLocalBounds());
     right.removeFromRight (8);
     cpuLabel.setBounds (right.removeFromBottom (14));
     statusLabel.setBounds (right);
@@ -565,6 +747,17 @@ void MainComponent::autosave()
 // ============================================================================
 // Keyboard
 // ============================================================================
+void MainComponent::setMidiMapMode (bool on)
+{
+    midiMapBtn.setToggleState (on, juce::dontSendNotification);
+    if (! on) { midiMap.reset(); Nav::setStatus ("MIDI map saved"); return; }
+    if (midiMap) return;
+    midiMap = std::make_unique<MidiMapOverlay> (*this);
+    addAndMakeVisible (*midiMap);
+    midiMap->setBounds (getLocalBounds());
+    midiMapBtn.toFront (false);
+}
+
 bool MainComponent::keyPressed (const juce::KeyPress& key)
 {
     auto& e = Engine::get();
@@ -579,8 +772,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         if (code == 'N') { newSession(); return true; }
         if (code == 'E') { showExportDialog(); return true; }
         if (code == ',') { showSettingsDialog (0); return true; }
+        if (code == 'M' && mods.isShiftDown()) { setMidiMapMode (midiMap == nullptr); return true; }
         return false;
     }
+    if (midiMap && code == juce::KeyPress::escapeKey) { setMidiMapMode (false); return true; }
     if (code == juce::KeyPress::spaceKey) { e.togglePlay(); return true; }
     if (handlePadKeyDown (key)) return true;
     if (code == juce::KeyPress::F1Key) { showView (0); return true; }
@@ -644,7 +839,7 @@ bool MainComponent::openSessionFile (const juce::File& f)
 
 void MainComponent::openSession()
 {
-    chooser = std::make_unique<juce::FileChooser> ("Open session", Engine::getSessionsFolder(), "*.crsession");
+    chooser = makeFileChooser ("Open session", Engine::getSessionsFolder(), "*.crsession");
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
     {
         if (fc.getResult().existsAsFile()) openSessionFile (fc.getResult());
@@ -661,7 +856,7 @@ void MainComponent::saveSession (bool saveAs)
         else showError ("Save session", err);
     };
     if (! saveAs && e.session().file.existsAsFile()) { doSave (e.session().file, false); return; }
-    chooser = std::make_unique<juce::FileChooser> ("Save session", Engine::getSessionsFolder().getChildFile ("Untitled.crsession"), "*.crsession");
+    chooser = makeFileChooser ("Save session", Engine::getSessionsFolder().getChildFile ("Untitled.crsession"), "*.crsession");
     chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [doSave] (const juce::FileChooser& fc)
     {
         auto f = fc.getResult();
@@ -690,7 +885,7 @@ void MainComponent::loadBankPresetDialog (bool save)
     const int b = e.selectedBank;
     if (save)
     {
-        chooser = std::make_unique<juce::FileChooser> ("Save bank preset", Engine::getBanksFolder().getChildFile (juce::File::createLegalFileName (e.session().banks[(size_t) b].name) + ".crbank"), "*.crbank");
+        chooser = makeFileChooser ("Save bank preset", Engine::getBanksFolder().getChildFile (juce::File::createLegalFileName (e.session().banks[(size_t) b].name) + ".crbank"), "*.crbank");
         chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this, b] (const juce::FileChooser& fc)
         {
             if (fc.getResult() == juce::File()) return;
@@ -701,7 +896,7 @@ void MainComponent::loadBankPresetDialog (bool save)
     }
     else
     {
-        chooser = std::make_unique<juce::FileChooser> ("Load bank preset into " + e.session().banks[(size_t) b].name, Engine::getBanksFolder(), "*.crbank");
+        chooser = makeFileChooser ("Load bank preset into " + e.session().banks[(size_t) b].name, Engine::getBanksFolder(), "*.crbank");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [b] (const juce::FileChooser& fc)
         {
             if (! fc.getResult().existsAsFile()) return;
@@ -749,7 +944,7 @@ void MainComponent::showFileMenu()
             case 3: saveSession (false); break;
             case 4: saveSession (true); break;
             case 5:
-                chooser = std::make_unique<juce::FileChooser> ("Save session with samples", Engine::getSessionsFolder().getChildFile ("Untitled.crsession"), "*.crsession");
+                chooser = makeFileChooser ("Save session with samples", Engine::getSessionsFolder().getChildFile ("Untitled.crsession"), "*.crsession");
                 chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this] (const juce::FileChooser& fc)
                 {
                     if (fc.getResult() == juce::File()) return;
@@ -767,7 +962,7 @@ void MainComponent::showFileMenu()
             case 10: loadBankPresetDialog (false); break;
             case 11: loadBankPresetDialog (true); break;
             case 20:
-                chooser = std::make_unique<juce::FileChooser> ("Import audio", Engine::getSamplesFolder(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+                chooser = makeFileChooser ("Import audio", Engine::getSamplesFolder(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
                 chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectMultipleItems,
                                       [] (const juce::FileChooser& fc)
                                       {
@@ -781,7 +976,7 @@ void MainComponent::showFileMenu()
                                       });
                 break;
             case 21:
-                chooser = std::make_unique<juce::FileChooser> ("Import MIDI", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.mid;*.midi");
+                chooser = makeFileChooser ("Import MIDI", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.mid;*.midi");
                 chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [b] (const juce::FileChooser& fc)
                 {
                     if (! fc.getResult().existsAsFile()) return;
@@ -797,7 +992,7 @@ void MainComponent::showFileMenu()
                 });
                 break;
             case 22:
-                chooser = std::make_unique<juce::FileChooser> ("Export pattern as MIDI", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Pattern.mid"), "*.mid");
+                chooser = makeFileChooser ("Export pattern as MIDI", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Pattern.mid"), "*.mid");
                 chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this, b] (const juce::FileChooser& fc)
                 {
                     if (fc.getResult() == juce::File()) return;
@@ -811,7 +1006,7 @@ void MainComponent::showFileMenu()
             case 24:
                 askForText ("Pack name", "My Pack", [this] (const juce::String& name)
                 {
-                    chooser = std::make_unique<juce::FileChooser> ("Export pack", Engine::getPacksFolder().getChildFile (juce::File::createLegalFileName (name) + ".crpack"), "*.crpack");
+                    chooser = makeFileChooser ("Export pack", Engine::getPacksFolder().getChildFile (juce::File::createLegalFileName (name) + ".crpack"), "*.crpack");
                     chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this, name] (const juce::FileChooser& fc)
                     {
                         if (fc.getResult() == juce::File()) return;
@@ -822,7 +1017,7 @@ void MainComponent::showFileMenu()
                 });
                 break;
             case 25:
-                chooser = std::make_unique<juce::FileChooser> ("Install pack", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.crpack;*.zip");
+                chooser = makeFileChooser ("Install pack", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.crpack;*.zip");
                 chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
                 {
                     if (! fc.getResult().existsAsFile()) return;

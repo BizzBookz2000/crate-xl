@@ -563,6 +563,7 @@ public:
             b->setClickingTogglesState (false);
             b->onClick = [this, i] { auto& e = Engine::get(); e.repeatSlot = e.repeatSlot.load() == i ? -1 : i; lastRepeatSlot = i; refreshRepeat(); };
             b->setColour (juce::TextButton::buttonColourId, Pal::surface);
+            setMidiAction (*b, FocusActions::repeat1 + i);
             addAndMakeVisible (b);
             auto* a = repeatArrows.add (new IconButton (Icon::down, "Change the repeat rate"));
             a->onClick = [this, i] { showRepeatMenu (i); };
@@ -578,6 +579,7 @@ public:
             p->onDown = [this] (int idx, float vel, int key) { padPressed (idx, vel, key); };
             p->onUp = [this] (int idx, int key) { padReleased (idx, key); };
             p->onMenu = [this] (int idx) { showPadMenu (idx, pads[idx % 64]); };
+            setMidiAction (*p, FocusActions::triggerPad1 + i);
             addAndMakeVisible (p);
         }
 
@@ -614,6 +616,11 @@ public:
 
         // ---- right column ----
         for (auto* b : { &keysBtn, &selectBtn, &sceneBtn, &muteBtn, &soloBtn }) addAndMakeVisible (b);
+        setMidiAction (keysBtn, FocusActions::toggleKeys);
+        setMidiAction (selectBtn, FocusActions::modeSelect);
+        setMidiAction (sceneBtn, FocusActions::modeScene);
+        setMidiAction (muteBtn, FocusActions::modeMute);
+        setMidiAction (soloBtn, FocusActions::modeSolo);
         keysBtn.onClick = [this]
         {
             auto& e = Engine::get();

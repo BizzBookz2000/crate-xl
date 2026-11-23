@@ -177,6 +177,9 @@ private:
     juce::TextButton openBtn { "Open plugin" };
     juce::OwnedArray<Knob> knobs;
     juce::OwnedArray<ChoiceField> choices;
+    juce::Rectangle<int> graphArea;     // frequency response, for filters and EQs
+    bool hasGraph() const;
+    void paintResponse (juce::Graphics& g, juce::Rectangle<float> r);
 };
 
 // Unlimited (or fixed-size) insert chain: list of effect cards + "Add effect".
@@ -229,6 +232,24 @@ bool isAudioFile (const juce::File& f);
 // Drops / imports audio as new tracks, one per file, in the background (stems keep their
 // Broadcast WAV positions relative to each other; otherwise they all start at originTick).
 void importStems (const juce::StringArray& files, int originTick);
+// File dialogs: the OS dialog on Windows / macOS. On Android the built-in browser is used,
+// because Android's document picker hands back content URIs instead of files.
+inline std::unique_ptr<juce::FileChooser> makeFileChooser (const juce::String& title, const juce::File& initial = {}, const juce::String& patterns = {})
+{
+   #if JUCE_ANDROID
+    return std::make_unique<juce::FileChooser> (title, initial, patterns, false);
+   #else
+    return std::make_unique<juce::FileChooser> (title, initial, patterns);
+   #endif
+}
+
+// MIDI map mode: tag a control with the FocusActions action it performs, so it can be
+// mapped by clicking it while MIDI map mode is on (knobs are mappable by their parameter).
+void setMidiAction (juce::Component& c, int action);
+int getMidiAction (const juce::Component& c);   // -1 when untagged
+
+// Bank chooser with new / duplicate / copy / paste / rename / clear / delete.
+void showBanksMenu (juce::Component* target);
 
 // Resample submenu for a channel (bounce / bounce with sends / freeze / unfreeze); ids 901-905.
 void addResampleItems (juce::PopupMenu& m, int stripKey);

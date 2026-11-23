@@ -238,7 +238,7 @@ private:
             else if (r == 5) { fv.addIfNotAlreadyThere (current.getFullPathName()); saveAppSettings(); return; }
             else if (r == 6)
             {
-                chooser = std::make_unique<juce::FileChooser> ("Choose a folder", current);
+                chooser = makeFileChooser ("Choose a folder", current);
                 chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this] (const juce::FileChooser& fc)
                 {
                     if (fc.getResult().isDirectory()) { root = fc.getResult(); current = root; tabs.setSelected (4, false); scan(); }

@@ -28,6 +28,16 @@ juce::String FocusActions::actionName (int a)
         case transportStop: return "Stop";
         case transportRecord: return "Record";
         case transportTap: return "Tap Tempo";
+        case transportLoop: return "Loop On / Off";
+        case transportMetronome: return "Metronome On / Off";
+        case undoAction: return "Undo";
+        case redoAction: return "Redo";
+        case rewindBar: return "Previous Bar";
+        case forwardBar: return "Next Bar";
+        case viewPerformance: return "Show Performance";
+        case viewEditor: return "Show Editor";
+        case viewSequencer: return "Show Sequencer";
+        case viewMixer: return "Show Mixer";
         default: return "Action " + juce::String (a);
     }
 }
@@ -343,6 +353,14 @@ void Engine::handleFocusAction (int a, float value, bool on)
     else if (a == F::transportStop) stop();
     else if (a == F::transportRecord) setRecording (! recording);
     else if (a == F::transportTap) tapTempo();
+    else if (a == F::transportLoop) sess.loopOn = ! sess.loopOn;
+    else if (a == F::transportMetronome) sess.metronome = ! sess.metronome;
+    else if (a == F::undoAction) undo();
+    else if (a == F::redoAction) redo();
+    else if (a == F::rewindBar) rewind();
+    else if (a == F::forwardBar) fastForward();
+    else if (a >= F::viewPerformance && a <= F::viewMixer) { if (onShowView) onShowView (a - F::viewPerformance); }
+    sendChangeMessage();
     uiStateChanged = true;
 }
 
