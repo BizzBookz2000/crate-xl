@@ -32,7 +32,7 @@ set "SDKDIR=%ANDROID_HOME:\=\\%"
 call gradlew.bat assembleDebug || goto :fail
 
 if not exist "..\..\dist" mkdir "..\..\dist"
-for %%f in (app\build\outputs\apk\debug\*.apk) do copy /y "%%f" "..\..\dist\Crate XL.apk" >nul
+for /r app\build\outputs\apk %%f in (*.apk) do copy /y "%%f" "..\..\dist\Crate XL.apk" >nul
 echo.
 echo Done: dist\Crate XL.apk
 echo Copy it to your phone or tablet and open it to install, or with the device plugged in:

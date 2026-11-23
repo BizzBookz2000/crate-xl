@@ -45,7 +45,7 @@ chmod +x gradlew
 ./gradlew assembleDebug
 
 mkdir -p ../../dist
-cp app/build/outputs/apk/debug/*.apk "../../dist/Crate XL.apk"
+cp "$(find app/build/outputs/apk -name '*.apk' | head -n 1)" "../../dist/Crate XL.apk"
 echo
 echo "Done: dist/Crate XL.apk"
 echo "Copy it to your phone or tablet and open it to install (allow installs from this source when asked),"
