@@ -38,6 +38,7 @@ juce::String FocusActions::actionName (int a)
         case viewEditor: return "Show Editor";
         case viewSequencer: return "Show Sequencer";
         case viewMixer: return "Show Mixer";
+        case returnToStart: return "Back to Start";
         default: return "Action " + juce::String (a);
     }
 }
@@ -358,6 +359,7 @@ void Engine::handleFocusAction (int a, float value, bool on)
     else if (a == F::undoAction) undo();
     else if (a == F::redoAction) redo();
     else if (a == F::rewindBar) rewind();
+    else if (a == F::returnToStart) returnToStart();
     else if (a == F::forwardBar) fastForward();
     else if (a >= F::viewPerformance && a <= F::viewMixer) { if (onShowView) onShowView (a - F::viewPerformance); }
     sendChangeMessage();

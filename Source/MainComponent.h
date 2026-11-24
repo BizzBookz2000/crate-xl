@@ -59,7 +59,7 @@ private:
     std::unique_ptr<TrackHelper> trackHelper;
     std::unique_ptr<TransportDisplay> display;
     IconButton stopBtn { Icon::stopSquare, "Stop (rewinds on second press)" }, playBtn { Icon::play, "Play / pause (Space)", true },
-               recBtn { Icon::record, "Record (R)", true }, rewBtn { Icon::rewind, "Previous bar" }, ffBtn { Icon::forward, "Next bar" },
+               recBtn { Icon::record, "Record (R)", true }, rewBtn { Icon::rewind, "Previous bar" }, startBtn { Icon::toStart, "Back to the start (Home)" }, ffBtn { Icon::forward, "Next bar" },
                loopBtn { Icon::loop, "Loop (L)", true };
     juce::TextButton undoBtn { "Undo" }, redoBtn { "Redo" }, midiMapBtn { "MIDI" };
     std::unique_ptr<juce::Component> midiMap;

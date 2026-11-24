@@ -12,7 +12,7 @@ enum class Icon
     pads, editor, sequencer, mixer, browser, fx, macro, keyboard, plus, minus, trash, copy, paste, cut,
     close, power, up, down, left, right, mic, wave, scissors, link, lock, hand, select, pencil, brush,
     split, magnet, headphones, grid, tap, zoomIn, zoomOut, save, folder, check, eye, star, chord, automation,
-    io, sliders, stopSquare
+    io, sliders, stopSquare, toStart
 };
 
 void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> r, juce::Colour c);
@@ -164,9 +164,15 @@ public:
     void setTarget (cr::InsertSlot* slot, const juce::String& baseAddress, int index, juce::Colour accent);
     int getPreferredHeight (int width) const;
     std::function<void (int action)> onAction;   // 1 replace, 2 remove, 3 up, 4 down, 5 open plugin window
+    // Dragging the card by its title bar: phase 0 start, 1 move, 2 drop
+    std::function<void (int phase, const juce::MouseEvent&)> onReorderDrag;
     void paint (juce::Graphics& g) override;
     void resized() override;
     void refreshValues();
+    void mouseMove (const juce::MouseEvent& e) override;
+    void mouseDown (const juce::MouseEvent& e) override;
+    void mouseDrag (const juce::MouseEvent& e) override;
+    void mouseUp (const juce::MouseEvent& e) override;
 private:
     cr::InsertSlot* slot = nullptr;
     int index = 0;
@@ -178,6 +184,7 @@ private:
     juce::OwnedArray<Knob> knobs;
     juce::OwnedArray<ChoiceField> choices;
     juce::Rectangle<int> graphArea;     // frequency response, for filters and EQs
+    bool reordering = false;
     bool hasGraph() const;
     void paintResponse (juce::Graphics& g, juce::Rectangle<float> r);
 };
@@ -200,6 +207,10 @@ public:
 private:
     void addEffect (int slot);
     void handleAction (int slot, int action);
+    void reorderDrag (int cardIndex, int phase, const juce::MouseEvent& e);
+    std::vector<int> cardSlots;          // slot index of each card
+    int dragCard = -1, dropPos = -1, dragGrabY = 0;
+    struct DropLine : juce::Component { void paint (juce::Graphics& g) override { g.fillAll (Pal::accent); } } dropLine;
     std::vector<cr::InsertSlot>* chain = nullptr;
     int lfxBank = -1, lfxPad = -1, lfxLayer = -1;
     juce::String base;

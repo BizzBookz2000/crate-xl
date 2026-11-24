@@ -26,6 +26,10 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> r, juce::Col
         case Icon::rewind:
             p.addTriangle (P (0.5f, 0.25f), P (0.5f, 0.75f), P (0.16f, 0.5f));
             p.addTriangle (P (0.84f, 0.25f), P (0.84f, 0.75f), P (0.5f, 0.5f)); fill = true; break;
+        case Icon::toStart:   // |<< : back to the beginning
+            p.addRectangle (x + 0.14f * s, y + 0.25f * s, 0.09f * s, 0.5f * s);
+            p.addTriangle (P (0.56f, 0.25f), P (0.56f, 0.75f), P (0.26f, 0.5f));
+            p.addTriangle (P (0.88f, 0.25f), P (0.88f, 0.75f), P (0.58f, 0.5f)); fill = true; break;
         case Icon::forward:
             p.addTriangle (P (0.16f, 0.25f), P (0.16f, 0.75f), P (0.5f, 0.5f));
             p.addTriangle (P (0.5f, 0.25f), P (0.5f, 0.75f), P (0.84f, 0.5f)); fill = true; break;
@@ -704,8 +708,38 @@ void EffectCard::paint (juce::Graphics& g)
     g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f);
     g.setColour (slot && ! slot->bypass ? Pal::text : Pal::textFaint);
     g.setFont (Fonts::ui (13.0f, true));
-    g.drawFittedText (slot ? slot->getName() : juce::String ("Empty"), juce::Rectangle<int> (38, 6, getWidth() - 76, 22), juce::Justification::centredLeft, 1);
+    g.drawFittedText (slot ? slot->getName() : juce::String ("Empty"), juce::Rectangle<int> (38, 6, getWidth() - 96, 22), juce::Justification::centredLeft, 1);
+    // grip: drag the title bar to reorder
+    if (slot != nullptr)
+    {
+        g.setColour (Pal::textFaint);
+        for (int gx = 0; gx < 2; ++gx) for (int gy = 0; gy < 3; ++gy)
+            g.fillEllipse ((float) (getWidth() - 50 + gx * 5), (float) (11 + gy * 5), 2.5f, 2.5f);
+    }
     if (hasGraph()) paintResponse (g, graphArea.toFloat());
+}
+
+// Grab the card by its title bar to move it up or down the chain.
+void EffectCard::mouseMove (const juce::MouseEvent& e)
+{
+    setMouseCursor (e.y < 32 && slot != nullptr ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
+}
+
+void EffectCard::mouseDown (const juce::MouseEvent& e)
+{
+    reordering = e.y < 32 && slot != nullptr && onReorderDrag != nullptr && ! e.mods.isPopupMenu();
+    if (reordering) onReorderDrag (0, e);
+}
+
+void EffectCard::mouseDrag (const juce::MouseEvent& e)
+{
+    if (reordering) onReorderDrag (1, e);
+}
+
+void EffectCard::mouseUp (const juce::MouseEvent& e)
+{
+    if (reordering) onReorderDrag (2, e);
+    reordering = false;
 }
 
 void EffectCard::resized()
@@ -772,6 +806,9 @@ void InsertChainView::clear() { chain = nullptr; lfxBank = -1; refresh(); }
 void InsertChainView::refresh()
 {
     cards.clear();
+    cardSlots.clear();
+    dragCard = -1;
+    dropLine.setVisible (false);
     auto& e = Engine::get();
     if (chain != nullptr)
     {
@@ -780,6 +817,9 @@ void InsertChainView::refresh()
             auto* c = cards.add (new EffectCard());
             c->setTarget (&(*chain)[(size_t) i], base + "fx" + juce::String (i) + "/", i, accent);
             c->onAction = [this, i] (int a) { handleAction (i, a); };
+            const int ci = cards.size() - 1;
+            c->onReorderDrag = [this, ci] (int phase, const juce::MouseEvent& ev) { reorderDrag (ci, phase, ev); };
+            cardSlots.push_back (i);
             content.addAndMakeVisible (c);
         }
         addBtn.setVisible (true);
@@ -797,6 +837,9 @@ void InsertChainView::refresh()
                 auto* c = cards.add (new EffectCard());
                 c->setTarget (&layer.fx[(size_t) i], "lfx/" + juce::String (lfxBank) + "/" + juce::String (lfxPad) + "/" + juce::String (lfxLayer) + "/" + juce::String (i) + "/", i, accent);
                 c->onAction = [this, i] (int a) { handleAction (i, a); };
+                const int ci = cards.size() - 1;
+                c->onReorderDrag = [this, ci] (int phase, const juce::MouseEvent& ev) { reorderDrag (ci, phase, ev); };
+                cardSlots.push_back (i);
                 content.addAndMakeVisible (c);
             }
             int used = 0;
@@ -831,6 +874,86 @@ void InsertChainView::resized()
     addBtn.setBounds (0, y, w, 32);
     y += 40;
     content.setSize (w, y);
+}
+
+// Drag-and-drop reordering. The audio follows the order on screen: the top effect
+// processes first, and each one feeds the next.
+void InsertChainView::reorderDrag (int ci, int phase, const juce::MouseEvent& ev)
+{
+    auto* card = cards[ci];
+    if (card == nullptr || cards.size() < 2) return;
+    const int y = ev.getEventRelativeTo (&content).y;
+    if (phase == 0)
+    {
+        dragCard = ci;
+        dragGrabY = ev.getEventRelativeTo (card).y;
+        dropPos = ci;
+        card->toFront (false);
+        card->setAlpha (0.85f);
+        if (dropLine.getParentComponent() != &content) { content.addChildComponent (dropLine); }
+        dropLine.setInterceptsMouseClicks (false, false);
+        return;
+    }
+    if (dragCard != ci) return;
+    // layout positions as if nothing were being dragged
+    std::vector<int> tops;
+    int yy = 0;
+    const int w = getWidth() - 8;
+    for (auto* c : cards) { tops.push_back (yy); yy += c->getPreferredHeight (w) + 8; }
+    if (phase == 1)
+    {
+        card->setTopLeftPosition (card->getX(), juce::jlimit (-20, juce::jmax (0, content.getHeight() - 20), y - dragGrabY));
+        const int centre = y - dragGrabY + card->getHeight() / 2;
+        int pos = 0;
+        for (int i = 0; i < cards.size(); ++i)
+        {
+            if (i == ci) continue;
+            const int mid = tops[(size_t) i] + cards[i]->getHeight() / 2;
+            if (centre > mid) pos = (i < ci ? i + 1 : i);
+        }
+        // pos: index in the final order
+        int lineY;
+        if (pos <= 0) lineY = 0;
+        else if (pos >= cards.size() - 1) lineY = tops.back() + cards.getLast()->getHeight() + 2;
+        else lineY = tops[(size_t) (pos < ci ? pos : pos + 1)] - 5;
+        dropPos = pos;
+        dropLine.setBounds (0, juce::jmax (0, lineY), w, 3);
+        dropLine.setVisible (pos != ci);
+        dropLine.repaint();
+        auto vy = viewport.getViewPositionY();
+        const int local = y - vy;
+        if (local < 30) viewport.setViewPosition (0, juce::jmax (0, vy - 12));
+        else if (local > viewport.getHeight() - 30) viewport.setViewPosition (0, vy + 12);
+        return;
+    }
+    // drop
+    card->setAlpha (1.0f);
+    dropLine.setVisible (false);
+    const int from = cardSlots[(size_t) ci];
+    const int toCard = juce::jlimit (0, cards.size() - 1, dropPos);
+    dragCard = -1;
+    if (toCard != ci)
+    {
+        auto& e = Engine::get();
+        if (chain != nullptr) e.moveInsert (*chain, from, cardSlots[(size_t) toCard]);
+        else if (lfxBank >= 0)
+        {
+            auto& pad = e.session().banks[(size_t) lfxBank].pads[(size_t) lfxPad];
+            if (juce::isPositiveAndBelow (lfxLayer, (int) pad.layers.size()))
+            {
+                auto& fx = pad.layers[(size_t) lfxLayer].fx;
+                const int to = cardSlots[(size_t) toCard];
+                const juce::ScopedLock sl (e.getLock());
+                if (from < to) std::rotate (fx.begin() + from, fx.begin() + from + 1, fx.begin() + to + 1);
+                else std::rotate (fx.begin() + to, fx.begin() + from, fx.begin() + from + 1);
+            }
+        }
+        Nav::setStatus ("Effect order changed: top to bottom is the order the sound goes through");
+    }
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<InsertChainView> (this)]
+    {
+        if (safe) { safe->refresh(); if (safe->onChanged) safe->onChanged(); }
+    });
 }
 
 void InsertChainView::addEffect (int slot)

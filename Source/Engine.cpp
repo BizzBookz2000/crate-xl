@@ -888,18 +888,23 @@ int Engine::copySongClips()
 {
     const juce::ScopedLock sl (lock);
     songClipboard.clear();
+    songAudioClipboard.clear();
     for (auto& c : sess.song)
         if (c.selected && juce::isPositiveAndBelow (c.pattern, (int) sess.banks[(size_t) c.bank].patterns.size()))
             songClipboard.push_back ({ c, sess.banks[(size_t) c.bank].patterns[(size_t) c.pattern] });
-    return (int) songClipboard.size();
+    for (int t = 0; t < cr::maxAudioTracks; ++t)
+        for (auto& c : sess.audioTracks[(size_t) t].clips)
+            if (c.selected && c.sample) songAudioClipboard.push_back ({ t, c });
+    return (int) (songClipboard.size() + songAudioClipboard.size());
 }
 
 int Engine::pasteSongClips (int atTick, int targetBank)
 {
-    if (songClipboard.empty()) return 0;
+    if (songClipboard.empty() && songAudioClipboard.empty()) return 0;
     checkpoint();
     int first = std::numeric_limits<int>::max();
     for (auto& cc : songClipboard) first = juce::jmin (first, cc.clip.start);
+    for (auto& ac : songAudioClipboard) first = juce::jmin (first, ac.clip.start);
     if (targetBank >= 0) createBank (targetBank);
     const juce::ScopedLock sl (lock);
     for (auto& c : sess.song) c.selected = false;
@@ -928,6 +933,17 @@ int Engine::pasteSongClips (int atTick, int targetBank)
         clip.start = atTick + (cc.clip.start - first);
         clip.selected = true;
         sess.song.push_back (clip);
+        ++n;
+    }
+    for (auto& t : sess.audioTracks) for (auto& c : t.clips) c.selected = false;
+    for (auto& ac : songAudioClipboard)
+    {
+        auto& tr = sess.audioTracks[(size_t) ac.track];
+        if (! tr.created) continue;
+        auto clip = ac.clip;
+        clip.start = atTick + (ac.clip.start - first);
+        clip.selected = true;
+        tr.clips.push_back (clip);
         ++n;
     }
     sendChangeMessage();

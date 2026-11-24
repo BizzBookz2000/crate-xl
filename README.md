@@ -102,6 +102,13 @@ You can also pass `-DCRATE_PRODUCT_NAME="My Name"` when configuring. The build s
 - **Scenes**: a pattern grid per track; launches quantised to 1 beat, or 1/2/4/8 bars. Capture, duplicate, rename, reorder, and paste a scene to the end of the song.
 - **Loop button**: with Loop on, playback repeats between the loop markers, and a pattern playing on its own repeats. With Loop off, nothing repeats. A pattern plays once, and recording keeps running forward, so the pattern grows a bar at a time as you play past its end.
 - **Recording puts the pattern in place**: as soon as you record, what you've recorded appears (and grows while you record) on the bank's song track, at the spot where you recorded it and as long as it played (in whole loops). It also goes into the scene grid (the last scene you launched, or the next free one). The pattern chip at the bottom still works for dragging copies anywhere. Turning Record off while playing keeps the loop going, so you can keep overdubbing.
+- **Selecting clips**:
+  - Drag a box over empty space (or below the tracks) to select several clips at once.
+  - Shift/Cmd-click adds a clip to the selection or takes it out.
+  - Selected clips light up.
+  - Drag any selected clip to move them all together.
+  - Shortcuts: Ctrl/Cmd + C copy, + V paste at the playhead, + D duplicate, + A select all. Delete removes the selection.
+  - Right-click an empty spot to **Paste here**.
 - **Copy a sequence**: right-click song clips → Copy (sequence + patterns), then Paste at playhead. The pasted clips get their own copies of the patterns, so editing them doesn't change the originals. "Paste onto <bank>" puts them on the selected bank's track. The pattern menu also has Copy pattern / Paste pattern, which works across banks.
 - **Pattern**: piano roll for pads and for keys-mode pads (128 keys). Tools: select, draw and paint. Quantize with swing, a velocity lane, copy/paste, double the pattern, and pattern automation lanes.
 
@@ -183,6 +190,7 @@ Everything lives in `Documents/Crate XL` (a `Documents/Crate` folder from an ear
 | Key | Action |
 |---|---|
 | Space | Play / stop |
+| Home or Enter | Back to the start |
 | R | Record |
 | L | Loop on/off |
 | C | Metronome |

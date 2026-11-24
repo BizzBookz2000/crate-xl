@@ -422,6 +422,8 @@ public:
     std::function<void()> onSelectionChanged, onEditPattern;
     static constexpr int headerW = 220, rulerH = 26, sideW = 34;
 
+    SongTimeline() { setWantsKeyboardFocus (true); }
+
     void rebuildRows()
     {
         auto& e = Engine::get();
@@ -542,12 +544,14 @@ public:
             const float x0 = axis.toX (c.start, lane.getX()), x1 = axis.toX ((double) c.start + c.length, lane.getX());
             if (x1 < (float) lane.getX() || x0 > (float) lane.getRight()) continue;
             auto r = juce::Rectangle<float> (x0, (float) lane.getY() + 3.0f, x1 - x0, (float) lane.getHeight() - 6.0f);
-            g.setColour (col.withAlpha (c.selected ? 0.95f : 0.7f));
+            // selected clips light up: brighter body, light header, white outline
+            const auto body = c.selected ? col.brighter (0.45f) : col.withAlpha (0.7f);
+            g.setColour (body);
             g.fillRoundedRectangle (r, 3.0f);
-            g.setColour (col.darker (0.6f));
+            g.setColour (c.selected ? juce::Colours::white.withAlpha (0.85f) : col.darker (0.6f));
             g.fillRoundedRectangle (r.removeFromTop (14.0f), 3.0f);
             const bool validPat = juce::isPositiveAndBelow (c.pattern, (int) bank.patterns.size());
-            g.setColour (Pal::text);
+            g.setColour (c.selected ? Pal::bg : Pal::text);
             g.setFont (Fonts::ui (10.0f, true));
             g.drawFittedText (validPat ? juce::String (c.pattern + 1) + " " + bank.patterns[(size_t) c.pattern].name : "?",
                               juce::Rectangle<float> (x0 + 4.0f, (float) lane.getY() + 3.0f, x1 - x0 - 6.0f, 14.0f).toNearestInt(), juce::Justification::centredLeft, 1);
@@ -579,7 +583,7 @@ public:
                     if (rep > c.offset) { g.setColour (Pal::bg.withAlpha (0.3f)); g.fillRect (axis.toX ((double) c.start + base - c.offset, lane.getX()), r.getY(), 1.0f, r.getHeight()); g.setColour (Pal::bg.withAlpha (0.6f)); }
                 }
             }
-            if (c.selected) { g.setColour (juce::Colours::white); g.drawRoundedRectangle (juce::Rectangle<float> (x0, (float) lane.getY() + 3.0f, x1 - x0, (float) lane.getHeight() - 6.0f), 3.0f, 1.5f); }
+            if (c.selected) { g.setColour (juce::Colours::white); g.drawRoundedRectangle (juce::Rectangle<float> (x0, (float) lane.getY() + 3.0f, x1 - x0, (float) lane.getHeight() - 6.0f), 3.0f, 2.0f); }
         }
     }
 
@@ -595,7 +599,7 @@ public:
             const float x0 = axis.toX (c.start, lane.getX()), x1 = axis.toX (c.start + lenTicks, lane.getX());
             if (x1 < (float) lane.getX() || x0 > (float) lane.getRight()) continue;
             auto r = juce::Rectangle<float> (x0, (float) lane.getY() + 3.0f, x1 - x0, (float) lane.getHeight() - 6.0f);
-            g.setColour (col.withAlpha (0.35f));
+            g.setColour (c.selected ? col.brighter (0.4f).withAlpha (0.75f) : col.withAlpha (0.35f));
             g.fillRoundedRectangle (r, 3.0f);
             // waveform
             if (! c.sample->isStreamed())
@@ -617,7 +621,7 @@ public:
             g.setColour (Pal::text);
             g.setFont (Fonts::ui (10.0f, true));
             g.drawFittedText (c.sample->name, r.reduced (4.0f, 2.0f).toNearestInt(), juce::Justification::topLeft, 1);
-            if (c.selected) { g.setColour (juce::Colours::white); g.drawRoundedRectangle (r, 3.0f, 1.5f); }
+            if (c.selected) { g.setColour (juce::Colours::white); g.drawRoundedRectangle (r, 3.0f, 2.0f); }
         }
     }
 
@@ -680,7 +684,24 @@ public:
             return;
         }
         const int row = rowAt (ev.y);
-        if (! juce::isPositiveAndBelow (row, (int) rows.size())) { clearSelection(); repaint(); return; }
+        if (! juce::isPositiveAndBelow (row, (int) rows.size()))
+        {
+            // empty space below the tracks: start a selection box from here too
+            grabKeyboardFocus();
+            if (ev.x > headerW && ev.x < getWidth() - sideW && ! ev.mods.isPopupMenu())
+            {
+                if (! ev.mods.isShiftDown() && ! ev.mods.isCommandDown()) clearSelection();
+                rubberActive = true;
+                pendingAdd = false;
+                rubberBase.clear();
+                for (auto& c : s.song) rubberBase.push_back (c.selected);
+                for (auto& t : s.audioTracks) for (auto& c : t.clips) rubberBase.push_back (c.selected);
+            }
+            else if (ev.mods.isPopupMenu() && ev.x > headerW) emptyMenu (rows.empty() ? 0 : rows.front().key, juce::jmax (0, snapTo (axis.toTick ((float) ev.x, lane.getX()), grid, true)));
+            else clearSelection();
+            repaint();
+            return;
+        }
         const int key = rows[(size_t) row].key;
         if (ev.x < headerW)
         {
@@ -711,14 +732,23 @@ public:
         auto h = hitTest (ev.getPosition());
         const int tick = juce::jmax (0, snapTo (axis.toTick ((float) ev.x, lane.getX()), grid, true));
 
-        if (ev.mods.isPopupMenu()) { if (h.clip >= 0) { if (! (h.audio ? s.audioTracks[(size_t) (key - 1000)].clips[(size_t) h.clip].selected : s.song[(size_t) h.clip].selected)) { clearSelection(); select (h); } clipMenu(); } return; }
+        if (ev.mods.isPopupMenu())
+        {
+            if (h.clip >= 0) { if (! (h.audio ? s.audioTracks[(size_t) (key - 1000)].clips[(size_t) h.clip].selected : s.song[(size_t) h.clip].selected)) { clearSelection(); select (h); } clipMenu(); }
+            else emptyMenu (key, tick);
+            return;
+        }
+        grabKeyboardFocus();
 
         if (tool == 2 && h.clip >= 0) { splitAt (h, juce::jmax (0, snapTo (axis.toTick ((float) ev.x, lane.getX()), grid))); return; }
         if (h.clip >= 0)
         {
             e.checkpoint();
-            const bool already = h.audio ? s.audioTracks[(size_t) (key - 1000)].clips[(size_t) h.clip].selected : s.song[(size_t) h.clip].selected;
-            if (! already && ! ev.mods.isShiftDown()) clearSelection();
+            auto& selFlag = h.audio ? s.audioTracks[(size_t) (key - 1000)].clips[(size_t) h.clip].selected : s.song[(size_t) h.clip].selected;
+            const bool already = selFlag;
+            const bool add = ev.mods.isShiftDown() || ev.mods.isCommandDown();
+            if (add && already) { selFlag = false; repaint(); if (onSelectionChanged) onSelectionChanged(); return; }   // Shift/Cmd-click toggles
+            if (! already && ! add) clearSelection();
             select (h);
             drag.active = true;
             drag.resize = h.rightEdge && ! h.audio;
@@ -728,14 +758,22 @@ public:
             for (auto& t : s.audioTracks) for (auto& c : t.clips) drag.startPositions.push_back ({ c.start, (int) c.length });
             if (onSelectionChanged) onSelectionChanged();
         }
-        else if (tool == 1 || ev.getNumberOfClicks() >= 2)
+        else if (ev.getNumberOfClicks() >= 2)
         {
             if (key < cr::numBanks) addClip (key, s.banks[(size_t) key].workingPattern, tick);
         }
         else
         {
-            if (! ev.mods.isShiftDown()) clearSelection();
+            // empty space: drag a box to select several clips (any tool). With the draw tool,
+            // a plain click (no drag) adds a clip when the mouse goes up.
+            if (! ev.mods.isShiftDown() && ! ev.mods.isCommandDown()) clearSelection();
             rubberActive = true;
+            pendingAdd = tool == 1 && key < cr::numBanks;
+            pendingAddKey = key;
+            pendingAddTick = tick;
+            rubberBase.clear();
+            for (auto& c : s.song) rubberBase.push_back (c.selected);
+            for (auto& t : s.audioTracks) for (auto& c : t.clips) rubberBase.push_back (c.selected);
         }
         repaint();
     }
@@ -756,15 +794,34 @@ public:
         }
         if (rubberActive)
         {
+            if (ev.getDistanceFromDragStart() > 4) pendingAdd = false;
             rubber = juce::Rectangle<int> (dragStart, ev.getPosition());
             const double t0 = axis.toTick ((float) rubber.getX(), lane.getX()), t1 = axis.toTick ((float) rubber.getRight(), lane.getX());
-            const int r0 = rowAt (rubber.getY()), r1 = rowAt (rubber.getBottom());
+            int r0 = rowAt (rubber.getY()), r1 = rowAt (rubber.getBottom());
+            if (r1 < 0) r1 = (int) rows.size() - 1;
+            if (r0 < 0) r0 = 0;
+            auto rowOf = [this] (int key) { for (int i = 0; i < (int) rows.size(); ++i) if (rows[(size_t) i].key == key) return i; return -1; };
+            const double tps = e.getBpm() / 60.0 * cr::ppq;
+            size_t k = 0;
             for (auto& c : s.song)
             {
-                int ri = -1;
-                for (int i = 0; i < (int) rows.size(); ++i) if (rows[(size_t) i].key == c.bank) ri = i;
-                c.selected = ri >= r0 && ri <= r1 && c.start < t1 && c.start + c.length > t0;
+                const int ri = rowOf (c.bank);
+                const bool inBox = ri >= r0 && ri <= r1 && c.start < t1 && c.start + c.length > t0;
+                c.selected = (k < rubberBase.size() && rubberBase[k]) || inBox;
+                ++k;
             }
+            for (int t = 0; t < cr::maxAudioTracks; ++t)
+            {
+                const int ri = rowOf (1000 + t);
+                for (auto& c : s.audioTracks[(size_t) t].clips)
+                {
+                    const double len = c.sample ? (double) c.length / c.sample->sampleRate * tps : 0.0;
+                    const bool inBox = ri >= r0 && ri <= r1 && c.start < t1 && c.start + len > t0;
+                    c.selected = (k < rubberBase.size() && rubberBase[k]) || inBox;
+                    ++k;
+                }
+            }
+            if (onSelectionChanged) onSelectionChanged();
             repaint();
             return;
         }
@@ -792,11 +849,54 @@ public:
 
     void mouseUp (const juce::MouseEvent&) override
     {
+        if (rubberActive && pendingAdd)
+        {
+            auto& s = Engine::get().session();
+            addClip (pendingAddKey, s.banks[(size_t) pendingAddKey].workingPattern, pendingAddTick);
+        }
+        pendingAdd = false;
         drag.active = false;
         loopDrag = false;
         rubberActive = false;
         rubber = {};
         repaint();
+    }
+
+    // Right-click on an empty spot: paste here.
+    void emptyMenu (int key, int tick)
+    {
+        auto& e = Engine::get();
+        juce::PopupMenu m;
+        const int at = snapTo (tick, cr::barTicks(), true);
+        m.addItem (1, "Paste here (bar " + juce::String (at / cr::barTicks() + 1) + ")", e.hasSongClipboard());
+        if (key < cr::numBanks) m.addItem (2, "Paste here onto " + e.session().banks[(size_t) key].name, e.hasSongClipboard());
+        m.addItem (3, "Select all clips");
+        m.showMenuAsync (juce::PopupMenu::Options(), [this, key, at] (int r)
+        {
+            auto& en = Engine::get();
+            if (r == 1) en.pasteSongClips (at, -1);
+            else if (r == 2) en.pasteSongClips (at, key);
+            else if (r == 3) { for (auto& c : en.session().song) c.selected = true; for (auto& t : en.session().audioTracks) for (auto& c : t.clips) c.selected = true; }
+            repaint();
+            ViewBase::broadcast();
+        });
+    }
+
+    // Ctrl/Cmd + C / V / D / A, Delete
+    bool keyPressed (const juce::KeyPress& k) override
+    {
+        auto& e = Engine::get();
+        const auto cmd = juce::ModifierKeys::commandModifier;
+        if (k == juce::KeyPress ('c', cmd, 0)) { const int n = e.copySongClips(); Nav::setStatus (juce::String (n) + (n == 1 ? " clip" : " clips") + " copied"); return true; }
+        if (k == juce::KeyPress ('v', cmd, 0))
+        {
+            e.pasteSongClips (juce::jmax (0, snapTo (e.getPositionTicks(), cr::barTicks(), true)), -1);
+            repaint(); ViewBase::broadcast(); return true;
+        }
+        if (k == juce::KeyPress ('d', cmd, 0)) { clipAction (1); repaint(); return true; }
+        if (k == juce::KeyPress ('a', cmd, 0)) { for (auto& c : e.session().song) c.selected = true; for (auto& t : e.session().audioTracks) for (auto& c : t.clips) c.selected = true; repaint(); return true; }
+        if (k.isKeyCode (juce::KeyPress::deleteKey) || k.isKeyCode (juce::KeyPress::backspaceKey)) { clipAction (2); repaint(); ViewBase::broadcast(); return true; }
+        return false;
     }
 
     void mouseDoubleClick (const juce::MouseEvent& ev) override
@@ -1102,6 +1202,9 @@ private:
 
     std::unique_ptr<juce::FileChooser> chooser;
     struct Drag { bool active = false, resize = false; int anchorTick = 0; std::vector<std::pair<int, int>> startPositions; } drag;
+    bool pendingAdd = false;
+    int pendingAddKey = 0, pendingAddTick = 0;
+    std::vector<bool> rubberBase;   // selection before the box started (Shift / Cmd adds to it)
     juce::Point<int> dragStart;
     juce::Rectangle<int> rubber;
     bool rubberActive = false, loopDrag = false;

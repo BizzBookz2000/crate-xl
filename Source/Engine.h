@@ -58,7 +58,8 @@ struct FocusActions
         transportPlay = 121, transportStop, transportRecord, transportTap,
         transportLoop = 125, transportMetronome, undoAction, redoAction, rewindBar, forwardBar,
         viewPerformance = 131, viewEditor, viewSequencer, viewMixer,
-        numActions = 135
+        returnToStart = 135,
+        numActions = 136
     };
 
     struct Binding { bool isCC = false; int channel = 1, number = -1; };
@@ -180,6 +181,7 @@ public:
     double getTrackPatternPosition (int bank) const;   // -1 if the track isn't looping a pattern
     void setPosition (double ticks);
     void rewind();
+    void returnToStart() { setPosition (0.0); }   // back to bar 1 (keeps playing if playing)
     void fastForward();
     void setBpm (double bpm);
     double getBpm() const { return sess.bpm; }
@@ -342,7 +344,7 @@ public:
     // Sequence clipboard: song clips together with their patterns
     int copySongClips();                                 // copies the selected song clips; returns how many
     int pasteSongClips (int atTick, int targetBank);     // targetBank -1 = each clip's own bank; patterns are pasted as new copies
-    bool hasSongClipboard() const { return ! songClipboard.empty(); }
+    bool hasSongClipboard() const { return ! songClipboard.empty() || ! songAudioClipboard.empty(); }
     bool exportPack (const juce::File& file, const juce::String& packName, const juce::String& author, juce::String& error);
     bool installPack (const juce::File& file, juce::String& error);
     bool importMidi (const juce::File& file, int bank, juce::String& error, bool generalMidiMap = false);
@@ -533,6 +535,8 @@ private:
     std::vector<cr::Pattern> patternClipboard;
     struct CopiedClip { cr::SongClip clip; cr::Pattern pattern; };
     std::vector<CopiedClip> songClipboard;
+    struct CopiedAudioClip { int track; cr::AudioClip clip; };
+    std::vector<CopiedAudioClip> songAudioClipboard;
     void commitRecordedPatterns (double endTick, bool backToSong, bool final = true);
     void growPatternTo (cr::Pattern& pat, double relTick);     // lock held: put what was recorded into the song and scenes
     std::array<double, cr::numBanks> patternOrigin {};

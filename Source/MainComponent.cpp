@@ -468,7 +468,8 @@ MainComponent::MainComponent()
     addAndMakeVisible (menuBtn);
     addAndMakeVisible (*trackHelper);
     addAndMakeVisible (*display);
-    for (auto* b : { &stopBtn, &playBtn, &recBtn, &rewBtn, &ffBtn, &loopBtn }) addAndMakeVisible (b);
+    for (auto* b : { &stopBtn, &playBtn, &recBtn, &startBtn, &rewBtn, &ffBtn, &loopBtn }) addAndMakeVisible (b);
+    startBtn.onClick = [] { Engine::get().returnToStart(); };
     playBtn.setOnColour (Pal::play);
     recBtn.setOnColour (Pal::rec);
     loopBtn.setOnColour (Pal::accent);
@@ -489,6 +490,7 @@ MainComponent::MainComponent()
     setMidiAction (stopBtn, FA::transportStop);
     setMidiAction (recBtn, FA::transportRecord);
     setMidiAction (rewBtn, FA::rewindBar);
+    setMidiAction (startBtn, FA::returnToStart);
     setMidiAction (ffBtn, FA::forwardBar);
     setMidiAction (loopBtn, FA::transportLoop);
     setMidiAction (undoBtn, FA::undoAction);
@@ -629,7 +631,7 @@ void MainComponent::resized()
     right.removeFromRight (8);
     cpuLabel.setBounds (right.removeFromBottom (14));
     statusLabel.setBounds (right);
-    for (auto* b : { &stopBtn, &playBtn, &recBtn, &rewBtn, &ffBtn })
+    for (auto* b : { &stopBtn, &playBtn, &recBtn, &startBtn, &rewBtn, &ffBtn })
     {
         b->setBounds (t.removeFromLeft (44));
         t.removeFromLeft (2);
@@ -777,6 +779,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     }
     if (midiMap && code == juce::KeyPress::escapeKey) { setMidiMapMode (false); return true; }
     if (code == juce::KeyPress::spaceKey) { e.togglePlay(); return true; }
+    if (code == juce::KeyPress::homeKey || (code == juce::KeyPress::returnKey && ! mods.isAnyModifierKeyDown())) { e.returnToStart(); return true; }
     if (handlePadKeyDown (key)) return true;
     if (code == juce::KeyPress::F1Key) { showView (0); return true; }
     if (code == juce::KeyPress::F2Key) { showView (1); return true; }
@@ -933,6 +936,8 @@ void MainComponent::showFileMenu()
     m.addItem (30, "Settings...");
     m.addItem (31, "MIDI panic (all notes off)");
     m.addItem (32, "Show library folder");
+    m.addSeparator();
+    m.addItem (33, "About Crate XL (ILLAHTAINMENT)");
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&menuBtn), [this] (int r)
     {
         auto& en = Engine::get();
@@ -1027,6 +1032,7 @@ void MainComponent::showFileMenu()
                 });
                 break;
             case 30: showSettingsDialog (0); break;
+            case 33: showSettingsDialog (4); break;   // About tab
             case 31: en.midiPanic(); break;
             case 32: Engine::getLibraryFolder().revealToUser(); break;
             default: break;
