@@ -5,6 +5,10 @@ on:
 
 jobs:
   emulator:
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [34, 35, 36]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -31,16 +35,23 @@ jobs:
           ./gradlew assembleRelease_Release --no-daemon
           find app/build -name "*.apk"
           find app/build -path "*obj*" -name "*.so" | head
+      - name: Get the published ARM APK
+        run: |
+          git fetch --depth 1 origin builds
+          git show "origin/builds:Crate XL.apk" > published-arm.apk
+          ls -la published-arm.apk
       - name: Run on emulator and capture crash
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: ${{ matrix.api }}
           arch: x86_64
-          target: google_apis
+          target: ${{ matrix.api == 36 && 'google_apis' || 'google_apis' }}
           force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           disable-animations: true
-          script: bash tools/android-smoke.sh
+          script: |
+            echo "########## x86_64 build ##########"; bash tools/android-smoke.sh "$(find Builds/Android/app/build/outputs/apk -name '*.apk' | head -n 1)"; cp logcat.txt logcat-x86.txt
+            echo "########## published ARM APK ##########"; bash tools/android-smoke.sh published-arm.apk
       - name: Symbolize
         if: always()
         run: |
@@ -53,7 +64,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: android-crash-logs
+          name: android-crash-logs-${{ matrix.api }}
           path: |
             logcat.txt
             stack.txt
