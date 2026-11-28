@@ -535,7 +535,28 @@ struct Serializer
 // ============================================================================
 juce::File Engine::getLibraryFolder()
 {
+   #if JUCE_ANDROID
+    // Android: the app's own storage (Android/data/<package>/files). Shared Documents is
+    // off limits after a reinstall (files written by an earlier install can't be read),
+    // which made the starter kit fail to load and crashed the app on launch.
+    static const juce::File androidRoot = []
+    {
+        const auto internal = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
+        const auto storage = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getParentDirectory();
+        auto ext = storage.getChildFile ("Android").getChildFile ("data").getChildFile (internal.getFileName()).getChildFile ("files");
+        if ((ext.isDirectory() || ext.createDirectory()) && ext.hasWriteAccess())
+        {
+            auto probe = ext.getChildFile (".write-test");
+            if (probe.replaceWithText ("ok") && probe.deleteFile()) return ext;
+        }
+        auto in = internal.getChildFile ("files");
+        in.createDirectory();
+        return in;
+    }();
+    auto f = androidRoot.getChildFile ("Crate XL");
+   #else
     auto f = appFolderIn (juce::File::getSpecialLocation (juce::File::userDocumentsDirectory));
+   #endif
     if (! f.isDirectory())
     {
         f.createDirectory();

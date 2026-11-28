@@ -7,7 +7,7 @@ set(CRATE_PRODUCT_NAME "Crate XL" CACHE STRING "Application name")
 # targets whichever macOS version the building computer has.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
 
-project(Crate VERSION 1.3.5 LANGUAGES C CXX)
+project(Crate VERSION 1.3.6 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

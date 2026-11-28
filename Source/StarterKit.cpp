@@ -100,17 +100,47 @@ void loadStarterKit()
     auto folder = Engine::getSamplesFolder().getChildFile ("Crate Starter Kit");
     const char* names[] = { "Kick", "Snare", "Closed Hat", "Open Hat", "Clap", "Rim", "Low Tom", "Mid Tom", "High Tom", "Crash",
                             "Cowbell", "Shaker", "Conga", "Snap", "Sub Boom", "Noise Riser", "Soft Keys", "Round Bass" };
+    // A file can exist but be unreadable (Android after a reinstall), so check by loading.
     bool missing = false;
-    for (auto* n : names) if (! folder.getChildFile (juce::String (n) + ".wav").existsAsFile()) missing = true;
+    for (auto* n : names)
+    {
+        const auto f = folder.getChildFile (juce::String (n) + ".wav");
+        if (! f.existsAsFile() || ! f.hasReadAccess() || f.getSize() < 64) missing = true;
+    }
+    std::vector<std::pair<juce::String, juce::AudioBuffer<float>>> kit;
     if (missing)
     {
         folder.createDirectory();
-        for (auto& [name, buf] : buildKit())
-            if (auto w = createWavWriter (folder.getChildFile (name + ".wav"), sr, 2, 24)) w->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+        kit = buildKit();
+        for (auto& [name, buf] : kit)
+        {
+            const auto f = folder.getChildFile (name + ".wav");
+            f.deleteFile();
+            if (auto w = createWavWriter (f, sr, 2, 24)) w->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+        }
     }
 
+    // Load a kit sound onto a pad; if the file can't be read, use the sound from memory.
+    auto loadPad = [&e, &folder, &kit] (const juce::String& name, int bank, int pad)
+    {
+        e.loadSampleToPad (folder.getChildFile (name + ".wav"), bank, pad);
+        if (e.session().banks[(size_t) bank].pads[(size_t) pad].hasSound()) return;
+        if (kit.empty()) kit = buildKit();
+        for (auto& [n, buf] : kit)
+            if (n == name)
+            {
+                auto smp = std::make_shared<cr::SampleData>();
+                smp->buffer.makeCopyOf (buf);
+                smp->numFrames = buf.getNumSamples();
+                smp->sampleRate = sr;
+                smp->name = name;
+                e.setPadSample (bank, pad, smp);
+                return;
+            }
+    };
+
     e.createBank (0);
-    for (int i = 0; i < 16; ++i) e.loadSampleToPad (folder.getChildFile (juce::String (names[i]) + ".wav"), 0, i);
+    for (int i = 0; i < 16; ++i) loadPad (names[i], 0, i);
     {
         const juce::ScopedLock sl (e.getLock());
         auto& bank = e.session().banks[0];
@@ -134,8 +164,8 @@ void loadStarterKit()
     }
 
     e.createBank (1);
-    e.loadSampleToPad (folder.getChildFile ("Soft Keys.wav"), 1, 0);
-    e.loadSampleToPad (folder.getChildFile ("Round Bass.wav"), 1, 1);
+    loadPad ("Soft Keys", 1, 0);
+    loadPad ("Round Bass", 1, 1);
     {
         const juce::ScopedLock sl (e.getLock());
         auto& bank = e.session().banks[1];
@@ -144,6 +174,7 @@ void loadStarterKit()
         for (int p : { 0, 1 })
         {
             auto& pad = bank.pads[(size_t) p];
+            if (pad.layers.empty()) continue;   // never index a pad without a sound
             pad.keysMode = true;
             auto& l = pad.layers[0];
             l.p.trigger = cr::TriggerMode::hold;

@@ -206,7 +206,7 @@ Sessions (`.crsession`), bank presets (`.crbank`, with their samples), packs (`.
 
 Audio export covers the main mix or stems (one file per track), song / loop / custom range, 16/24/32-bit float or 12-bit vintage, normalize, and effect tails. Edited samples are saved with the session.
 
-Everything lives in `Documents/Crate XL` (a `Documents/Crate` folder from an earlier version is renamed automatically) (Samples, Banks, Sessions, Packs, Recordings, Exports). The session auto-saves every two minutes. To get it back, use the menu → Restore auto-saved session.
+Everything lives in `Documents/Crate XL` (Samples, Banks, Sessions, Packs, Recordings, Exports). A `Documents/Crate` folder from an earlier version is renamed automatically. On Android the folder is `Android/data/com.illahtainment.cratexl/files/Crate XL`, which is the app's own storage, so it keeps working after a reinstall. The session auto-saves every two minutes. To get it back, use the menu → Restore auto-saved session.
 
 ---
 
