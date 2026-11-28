@@ -553,8 +553,12 @@ MainComponent::MainComponent()
     lastAutosave = juce::Time::getMillisecondCounter();
 
    #if ! JUCE_LINUX
+   #if ! JUCE_ANDROID
+    // GPU rendering on desktop. Android uses JUCE's software renderer: some phone GPU
+    // drivers don't provide every GL function JUCE's renderer calls, which crashed on launch.
     if (juce::SystemStats::getEnvironmentVariable ("CRATE_NO_GL", {}).isEmpty())
         gl.attachTo (*this);
+   #endif
    #endif
 }
 

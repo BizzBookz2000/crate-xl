@@ -21,7 +21,10 @@ tapAllow() {
     sleep 3
   done
 }
-sleep 8
+sleep 3
+PID=$(adb shell pidof $PKG)
+echo "app pid $PID"
+sleep 5
 tapAllow
 sleep 15
 adb shell pidof $PKG && echo "ALIVE after launch" || echo "DIED after launch"
@@ -30,6 +33,8 @@ adb shell pidof $PKG && echo "ALIVE after taps" || echo "DIED after taps"
 adb logcat -d -v threadtime > logcat.txt
 echo "===== CRASH ====="
 grep -nE "FATAL|SIGSEGV|SIGABRT|SIGILL|SIGBUS|AndroidRuntime|Abort message|backtrace|#[0-9]+ pc|Caused by|at com\.|at android\.|UnsatisfiedLink|dlopen|libjuce|native_bridge|houdini|ndk_translation" logcat.txt | head -150
+echo "===== LAST APP LINES ====="
+[ -n "$PID" ] && grep -E "^[0-9-]+ [0-9:.]+ +$PID " logcat.txt | grep -vE "AAudioStream: setState|PlayerBase" | tail -40
 echo "===== APP LOG ====="
 grep -iE "juce|crate|oboe|aaudio|opensl" logcat.txt | head -80
 exit 0
