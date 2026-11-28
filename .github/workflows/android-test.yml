@@ -1,0 +1,60 @@
+name: Android crash test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Get JUCE
+        run: git clone --depth 1 --branch 9.0.4 https://github.com/juce-framework/JUCE.git JUCE
+      - name: Build x86_64 APK (same release code, emulator ABI)
+        working-directory: Builds/Android
+        run: |
+          mkdir -p ~/.android && cp ../../Builds/signing/crate-debug.keystore ~/.android/debug.keystore
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          sed -i 's/abiFilters("arm64-v8a", "armeabi-v7a")$/abiFilters("x86_64")/' app/build.gradle
+          grep -n abiFilters app/build.gradle
+          chmod +x gradlew
+          ./gradlew assembleRelease_Release --no-daemon
+          find app/build -name "*.apk"
+          find app/build -path "*obj*" -name "*.so" | head
+      - name: Run on emulator and capture crash
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash tools/android-smoke.sh
+      - name: Symbolize
+        if: always()
+        run: |
+          NDK=$(ls -d $ANDROID_SDK_ROOT/ndk/* | sort -V | tail -1)
+          SYM=$(dirname "$(find Builds/Android/app/build -path '*obj*x86_64*' -name 'libjuce_jni.so' | head -1)")
+          echo "symbols: $SYM"
+          [ -f logcat.txt ] && "$NDK/ndk-stack" -sym "$SYM" -i logcat.txt > stack.txt || true
+          echo "===== STACK ====="; cat stack.txt || true
+          echo "===== CRASH LINES ====="; grep -E "FATAL|AndroidRuntime|DEBUG|libc|Abort|SIGSEGV|SIGABRT|backtrace|#[0-9]+ pc|JUCE|Crate" logcat.txt | head -300 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-crash-logs
+          path: |
+            logcat.txt
+            stack.txt
+            screen*.png
