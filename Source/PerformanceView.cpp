@@ -1126,6 +1126,7 @@ private:
         m.addSectionHeader ("Pad " + cr::bankLetter (b) + "." + juce::String (idx + 1) + (pad.name.isNotEmpty() ? "  " + pad.name : juce::String()));
         m.addItem (1, "Edit pad");
         m.addItem (2, "Record a sample onto this pad...");
+        m.addItem (11, "Separate stems to a new bank (vocals, drums, bass, other)", e.padSample (b, idx) != nullptr);
         m.addSeparator();
         m.addItem (3, "Copy pad");
         m.addItem (4, "Paste pad", e.hasPadClipboard());
@@ -1151,6 +1152,7 @@ private:
                 case 8: showPadColourMenu (b, idx, target); break;
                 case 9: { const juce::ScopedLock sl (en.getLock()); auto& pd = en.session().banks[(size_t) b].pads[(size_t) idx]; pd.keysMode = ! pd.keysMode; break; }
                 case 10: showPadMidiSetup (b, idx, target); break;
+                case 11: separateStemsFromPad (b, idx); break;
                 default: break;
             }
             ViewBase::broadcast();

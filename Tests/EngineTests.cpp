@@ -3,6 +3,7 @@
 #include "../Source/Engine.h"
 #include "../Source/Stretch.h"
 #include "../Source/FileUtils.h"
+#include "../Source/StemSplit.h"
 
 namespace
 {
@@ -320,6 +321,119 @@ int main (int argc, char** argv)
             }
             check (finite, type + " is stable");
         }
+        // XL-950: low pass closed cuts a 5 kHz tone, open leaves it; VU meter reads; curve drawn
+        {
+            auto rmsAfter = [&] (float lowKnob, float tape)
+            {
+                auto fx = createBuiltinEffect ("XL-950");
+                fx->setParam (0, lowKnob); fx->setParam (3, tape); fx->setParam (4, 0.0f);
+                fx->prepare (sr, block);
+                juce::AudioBuffer<float> b (2, block);
+                double sum = 0; long pos = 0;
+                for (int k = 0; k < 40; ++k)
+                {
+                    for (int i = 0; i < block; ++i, ++pos) { const float x = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 5000.0 * pos / sr); b.setSample (0, i, x); b.setSample (1, i, x); }
+                    fx->process (b, block);
+                    if (k >= 20) for (int i = 0; i < block; ++i) sum += b.getSample (0, i) * b.getSample (0, i);
+                }
+                return std::sqrt (sum / (20.0 * block));
+            };
+            const double open = rmsAfter (10.0f, 0.0f), closed = rmsAfter (2.0f, 0.0f);
+            check (open > 0.3 && closed < open * 0.05, "XL-950 low pass: open passes 5 kHz, dial at 2 cuts it");
+            auto fx = createBuiltinEffect ("XL-950");
+            fx->setParam (0, 2.0f);
+            check (fx->hasMeter() && fx->hasFrequencyResponse() && fx->getResponseDb (100.0, sr) > -3.0 && fx->getResponseDb (8000.0, sr) < -30.0, "XL-950 response curve follows the low pass dial");
+            fx->prepare (sr, block);
+            juce::AudioBuffer<float> b (2, block);
+            for (int i = 0; i < block; ++i) { b.setSample (0, i, 0.3f * (float) std::sin (i * 0.02)); b.setSample (1, i, b.getSample (0, i)); }
+            fx->process (b, block);
+            check (fx->getMeterDb() > -30.0f, "XL-950 VU meter reads the output level");
+            cr::ParamInfo pi; pi.text = fx->params[0].text;
+            check (pi.format (10.0f) == "OPEN" && fx->params[1].text (0.0f) == "OFF", "XL-950 dial text (OPEN / OFF / Hz)");
+        }
+    }
+
+    std::cout << "Stem separation" << std::endl;
+    {
+        // energy of each stem for a test signal (generator gives L, R for sample i)
+        auto split = [&] (std::function<std::pair<float, float> (int)> gen, int len, juce::AudioBuffer<float>* sumOut = nullptr)
+        {
+            juce::AudioBuffer<float> in (2, len);
+            for (int i = 0; i < len; ++i) { auto [l, r] = gen (i); in.setSample (0, i, l); in.setSample (1, i, r); }
+            std::array<double, 4> energy {};
+            std::array<juce::AudioBuffer<float>, 4> outs;
+            for (auto& o : outs) o.setSize (2, len), o.clear();
+            std::array<int, 4> pos {};
+            cr::stems::Separator sep;
+            sep.run (in, len, sr, [&] (int st, const float* l, const float* r, int n)
+            {
+                outs[(size_t) st].copyFrom (0, pos[(size_t) st], l, n);
+                outs[(size_t) st].copyFrom (1, pos[(size_t) st], r, n);
+                pos[(size_t) st] += n;
+            });
+            for (int st = 0; st < 4; ++st)
+                for (int c = 0; c < 2; ++c) for (int i = 0; i < len; ++i) energy[(size_t) st] += outs[(size_t) st].getSample (c, i) * outs[(size_t) st].getSample (c, i);
+            if (sumOut)
+            {
+                double err = 0, ref = 0;
+                for (int c = 0; c < 2; ++c) for (int i = 0; i < len; ++i)
+                {
+                    float t = 0; for (auto& o : outs) t += o.getSample (c, i);
+                    err += (t - in.getSample (c, i)) * (t - in.getSample (c, i)); ref += in.getSample (c, i) * in.getSample (c, i);
+                }
+                sumOut->setSize (1, 1); sumOut->setSample (0, 0, (float) (10.0 * std::log10 (err / juce::jmax (1e-12, ref))));
+                check (pos[0] == len && pos[3] == len, "every stem has the full length");
+            }
+            const double total = energy[0] + energy[1] + energy[2] + energy[3];
+            for (auto& x : energy) x /= juce::jmax (1e-12, total);
+            return energy;
+        };
+        const int len = (int) sr * 3;
+        const double tau = juce::MathConstants<double>::twoPi;
+        juce::Random rnd (7);
+        juce::AudioBuffer<float> recon;
+        // a busy mix: centred tone, bass, clicks, panned tone, noise
+        split ([&] (int i) { const double t = i / sr; const float c = 0.3f * (float) std::sin (tau * 700 * t) + 0.3f * (float) std::sin (tau * 55 * t) + (i % 11025 < 30 ? 0.8f : 0.0f) + 0.05f * (rnd.nextFloat() - 0.5f);
+                             return std::make_pair (c + 0.2f * (float) std::sin (tau * 1500 * t), c); }, len, &recon);
+        check (recon.getSample (0, 0) < -60.0f, "stems add back up to the original (" + juce::String (recon.getSample (0, 0), 1) + " dB error)");
+        auto v = split ([&] (int i) { const float x = 0.5f * (float) std::sin (tau * 600 * i / sr); return std::make_pair (x, x); }, len);
+        check (v[0] > 0.8, "a centred sustained tone goes to Vocals (" + juce::String (v[0], 2) + ")");
+        auto b = split ([&] (int i) { const float x = 0.5f * (float) std::sin (tau * 50 * i / sr); return std::make_pair (x, x); }, len);
+        check (b[2] > 0.8, "a 50 Hz tone goes to Bass (" + juce::String (b[2], 2) + ")");
+        auto d = split ([&] (int i) { const float x = i % 11025 < 40 ? (rnd.nextFloat() - 0.5f) * 1.6f : 0.0f; return std::make_pair (x, x); }, len);
+        check (d[1] > 0.6, "clicks go to Drums (" + juce::String (d[1], 2) + ")");
+        auto o = split ([&] (int i) { const float x = 0.5f * (float) std::sin (tau * 1000 * i / sr); return std::make_pair (x, 0.0f); }, len);
+        check (o[3] > 0.8, "a hard-panned tone goes to Other (" + juce::String (o[3], 2) + ")");
+
+        // engine: a pad sample becomes a new bank with five pads
+        auto smp = std::make_shared<cr::SampleData>();
+        smp->buffer.setSize (2, len); smp->numFrames = len; smp->sampleRate = sr; smp->name = "Loop";
+        for (int i = 0; i < len; ++i) { const float x = 0.3f * (float) std::sin (tau * 220 * i / sr) + (i % 22050 < 20 ? 0.7f : 0.0f); smp->buffer.setSample (0, i, x); smp->buffer.setSample (1, i, x); }
+        Engine::StemSet set; juce::String err;
+        const bool rendered = e.renderStems (smp, "Test Loop", set, err);
+        check (rendered && set.files.size() == 4, "stems render to four WAV files");
+        const int bank = rendered ? e.placeStemsInNewBank (set, err) : -1;
+        check (bank >= 0, "stems placed in a new bank");
+        if (bank >= 0)
+        {
+            auto& bk = e.session().banks[(size_t) bank];
+            check (bk.pads[0].name == "Vocals" && bk.pads[1].name == "Drums" && bk.pads[2].name == "Bass" && bk.pads[3].name == "Other" && bk.pads[4].name == "Full mix"
+                   && bk.pads[4].hasSound() && bk.name == "Test Loop stems", "pads 1-5: Vocals, Drums, Bass, Other, Full mix");
+            check (e.padSample (bank, 1) != nullptr && e.padSample (bank, 1)->numFrames == len, "stem samples keep the song length");
+            e.deleteBank (bank);
+        }
+        if (set.files.size() > 0) juce::File (set.files[0]).getParentDirectory().deleteRecursively();
+
+        // speed: a 3-minute stereo song
+        const int songLen = (int) sr * 180;
+        juce::AudioBuffer<float> song (2, songLen);
+        for (int c = 0; c < 2; ++c) for (int i = 0; i < songLen; ++i) song.setSample (c, i, rnd.nextFloat() - 0.5f);
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        cr::stems::Separator sep;
+        sep.run (song, songLen, sr, [] (int, const float*, const float*, int) {});
+        const double secs = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
+        std::cout << "  3-minute song split in " << secs << " s" << std::endl;
+        check (secs < 60.0, "a 3-minute song splits in under a minute");
     }
 
     std::cout << "Sample editing" << std::endl;

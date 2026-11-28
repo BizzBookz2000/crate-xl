@@ -1,6 +1,7 @@
 #include <complex>
 #include "Effects.h"
 #include "DspUtils.h"
+#include "XLDsp.h"
 
 namespace
 {
@@ -622,12 +623,199 @@ private:
     int holdCounter = 0;
 };
 
+// ---------------------------------------------------------------------------
+// XL-950 (ILLAHTAINMENT): sampler filter / tape processor.
+// 12-bit converter -> 4-pole low pass -> high pass -> band pass -> tape, at 2x.
+class Xl950 : public BuiltinEffect
+{
+public:
+    static float lowpassHz  (float k) { return 150.0f * std::pow (20000.0f / 150.0f, k / 10.0f); }
+    static float bandpassHz (float k) { return 120.0f * std::pow (6000.0f / 120.0f, juce::jlimit (0.0f, 1.0f, (k / 10.0f - 0.01f) / 0.99f)); }
+    static float highpassHz (float k) { return 20.0f * std::pow (8000.0f / 20.0f, k / 10.0f); }
+    static float lowMixFor  (float k) { const float v = k / 10.0f; return v > 0.97f ? juce::jmax (0.0f, (1.0f - v) / 0.03f) : 1.0f; }
+    static float bandMixFor (float k) { return juce::jlimit (0.0f, 1.0f, (k / 10.0f - 0.005f) / 0.075f); }
+    static float highMixFor (float k) { return juce::jlimit (0.0f, 1.0f, (k / 10.0f) / 0.03f); }
+    static juce::String hzText (float hz)
+    {
+        return hz >= 1000.0f ? juce::String (hz / 1000.0f, hz >= 10000.0f ? 1 : 2) + " kHz"
+                             : juce::String ((int) std::round (hz)) + " Hz";
+    }
+
+    Xl950()
+    {
+        addParam ("Low Pass", 0.0f, 10.0f, 10.0f);
+        params.back().text = [] (float v) { return lowMixFor (v) <= 0.0f ? juce::String ("OPEN") : hzText (lowpassHz (v)); };
+        addParam ("Band Pass", 0.0f, 10.0f, 0.0f);
+        params.back().text = [] (float v) { return bandMixFor (v) <= 0.0f ? juce::String ("OFF") : hzText (bandpassHz (v)); };
+        addParam ("High Pass", 0.0f, 10.0f, 0.0f);
+        params.back().text = [] (float v) { return highMixFor (v) <= 0.0f ? juce::String ("OFF") : hzText (highpassHz (v)); };
+        addParam ("Tape", 0.0f, 10.0f, 3.0f);
+        params.back().text = [] (float v) { return v <= 0.0f ? juce::String ("OFF") : juce::String ((int) std::round (v * 10.0f)) + "%"; };
+        addChoice ("Converter", { "Clean", "12-Bit" }, 1);
+    }
+
+    juce::String getType() const override { return "XL-950"; }
+    bool hasMeter() const override { return true; }
+    float getMeterDb() const override { return levelDb.load(); }
+
+    void prepare (double sr, int maxBlockSize) override
+    {
+        sampleRate = sr;
+        blockSize = juce::jmax (16, maxBlockSize);
+        oversampling.reset();
+        oversampling.initProcessing ((size_t) blockSize);
+        osRate = sr * 2.0;
+        const double ramp = 0.03;
+        lowHz.reset (osRate, ramp);  bandHz.reset (osRate, ramp); highHz.reset (osRate, ramp);
+        lowMix.reset (osRate, ramp); bandMix.reset (osRate, ramp); highMix.reset (osRate, ramp);
+        tapeAmt.reset (osRate, 0.05); bitsMix.reset (osRate, 0.02);
+        snapTargets (true);
+        twelveBit.reset(); lowpass.reset();
+        for (auto& f : bandpass) f.reset();
+        for (auto& f : highpass) f.reset();
+        tape.prepare ((float) osRate);
+        tape.setAmount (tapeAmt.getCurrentValue());
+        prepared = true;
+    }
+
+    void reset() override
+    {
+        if (! prepared) return;
+        oversampling.reset();
+        twelveBit.reset(); lowpass.reset();
+        for (auto& f : bandpass) f.reset();
+        for (auto& f : highpass) f.reset();
+        tape.prepare ((float) osRate);
+        snapTargets (true);
+        tape.setAmount (tapeAmt.getCurrentValue());
+    }
+
+    bool hasFrequencyResponse() const override { return true; }
+    double getResponseDb (double f, double) const override
+    {
+        using C = std::complex<double>;
+        auto jw = [f] (double fc) { return C (0.0, f / fc); };
+        C h (1.0, 0.0);
+        // 4-pole ladder with fixed feedback
+        {
+            const double m = lowMixFor (get (0));
+            const C g = 1.0 / (1.0 + jw (lowpassHz (get (0))));
+            const C g4 = g * g * g * g;
+            const double k = xl::FourPoleLP::resonance;
+            const C lp = (1.0 + k) * g4 / (1.0 + k * g4);
+            h *= (1.0 - m) + m * lp;
+        }
+        // 12 dB high pass (SVF, Q 0.8)
+        {
+            const double m = highMixFor (get (2)), q = 0.8;
+            const C s = jw (highpassHz (get (2)));
+            h *= (1.0 - m) + m * (s * s / (s * s + s / q + 1.0));
+        }
+        // band pass, unity at centre (Q 1.6)
+        {
+            const double m = bandMixFor (get (1)), q = 1.6;
+            const C s = jw (bandpassHz (get (1)));
+            h *= (1.0 - m) + m * ((s / q) / (s * s + s / q + 1.0));
+        }
+        // tape: head bump + HF loss
+        {
+            const double a = get (3) / 10.0, wet = juce::jmin (1.0, a * 5.0);
+            if (wet > 0.0)
+            {
+                const double A = std::pow (10.0, a * 3.0 / 40.0), q = 0.9;
+                const C sb = jw (80.0);
+                const C bump = (sb * sb + sb * (A / q) + 1.0) / (sb * sb + sb / (A * q) + 1.0);
+                const C sl = jw (21000.0 - a * 9000.0);
+                const C hf = 1.0 / (sl * sl + sl / 0.6 + 1.0);
+                h *= (1.0 - wet) + wet * bump * hf;
+            }
+        }
+        return 20.0 * std::log10 (juce::jmax (1.0e-9, std::abs (h)));
+    }
+
+    void process (juce::AudioBuffer<float>& buffer, int n) override
+    {
+        if (! prepared || n <= 0) return;
+        juce::ScopedNoDenormals noDenormals;
+        snapTargets (false);
+        const int numCh = juce::jmin (2, buffer.getNumChannels());
+        double sum = 0.0;
+        for (int start = 0; start < n; start += blockSize)
+        {
+            const int len = juce::jmin (blockSize, n - start);
+            juce::dsp::AudioBlock<float> block (buffer.getArrayOfWritePointers(), (size_t) numCh, (size_t) start, (size_t) len);
+            auto os = oversampling.processSamplesUp (block);
+            const float fs = (float) osRate;
+            const int on = (int) os.getNumSamples();
+            float* data[2] = { os.getChannelPointer (0), numCh > 1 ? os.getChannelPointer (1) : nullptr };
+            constexpr float holdRate = 26040.0f, bandQ = 1.6f, highQ = 0.8f;
+            for (int i = 0; i < on; ++i)
+            {
+                const float gL = std::tan (xl::kPi * std::min (lowHz.getNextValue(), fs * 0.45f) / fs);
+                const float GL = gL / (1.0f + gL);
+                const auto cB = xl::SVF::make (bandHz.getNextValue(), bandQ, fs);
+                const auto cH = xl::SVF::make (highHz.getNextValue(), highQ, fs);
+                const float mL = lowMix.getNextValue(), mB = bandMix.getNextValue(), mH = highMix.getNextValue();
+                const float mBits = bitsMix.getNextValue(), tA = tapeAmt.getNextValue();
+                if ((i & 31) == 0) tape.setAmount (tA);
+                tape.tick();
+                for (int ch = 0; ch < numCh; ++ch)
+                {
+                    float x = data[ch][i];
+                    if (mBits > 0.0f) x += mBits * (twelveBit.process (x, ch, holdRate, fs) - x);
+                    x += mL * (lowpass.process (x, ch, GL) - x);
+                    highpass[ch].process (x, cH);
+                    x += mH * (highpass[ch].high - x);
+                    bandpass[ch].process (x, cB);
+                    x += mB * (cB.k * bandpass[ch].band - x);
+                    data[ch][i] = tape.process (x, ch);
+                }
+            }
+            oversampling.processSamplesDown (block);
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                auto* d = buffer.getWritePointer (ch, start);
+                for (int i = 0; i < len; ++i)
+                {
+                    if (! std::isfinite (d[i])) d[i] = 0.0f;
+                    sum += (double) d[i] * d[i];
+                }
+            }
+        }
+        const double rms = std::sqrt (sum / juce::jmax (1, numCh * n));
+        levelDb.store ((float) juce::Decibels::gainToDecibels (rms, -100.0));
+    }
+
+private:
+    void snapTargets (bool immediate)
+    {
+        auto set = [immediate] (auto& sv, float v) { if (immediate) sv.setCurrentAndTargetValue (v); else sv.setTargetValue (v); };
+        set (lowHz, lowpassHz (get (0)));   set (lowMix, lowMixFor (get (0)));
+        set (bandHz, bandpassHz (get (1))); set (bandMix, bandMixFor (get (1)));
+        set (highHz, highpassHz (get (2))); set (highMix, highMixFor (get (2)));
+        set (tapeAmt, get (3) / 10.0f);
+        set (bitsMix, getChoice (4) == 1 ? 1.0f : 0.0f);
+    }
+
+    juce::dsp::Oversampling<float> oversampling { 2, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false };
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> lowHz { 20000.0f }, bandHz { 120.0f }, highHz { 20.0f };
+    juce::SmoothedValue<float> lowMix, bandMix, highMix, tapeAmt, bitsMix;
+    xl::TwelveBit twelveBit;
+    xl::FourPoleLP lowpass;
+    xl::SVF bandpass[2], highpass[2];
+    xl::TapeStage tape;
+    double osRate = 88200.0;
+    int blockSize = 512;
+    bool prepared = false;
+    std::atomic<float> levelDb { -100.0f };
+};
+
 } // namespace
 
 juce::StringArray getBuiltinEffectTypes()
 {
     return { "6-Band EQ", "Compressor", "Delay", "Stereo Delay", "Reverb", "Chorus / Flanger", "Overdrive",
-             "Bit Crusher", "Filter", "Auto-Pan", "Stereo Widener", "Slicer", "Noise Gate" };
+             "Bit Crusher", "Filter", "Auto-Pan", "Stereo Widener", "Slicer", "Noise Gate", "XL-950" };
 }
 
 std::unique_ptr<BuiltinEffect> createBuiltinEffect (const juce::String& type)
@@ -645,5 +833,6 @@ std::unique_ptr<BuiltinEffect> createBuiltinEffect (const juce::String& type)
     if (type == "Stereo Widener")      return std::make_unique<Wide>();
     if (type == "Slicer")      return std::make_unique<Chop>();
     if (type == "Noise Gate")      return std::make_unique<Gate>();
+    if (type == "XL-950")      return std::make_unique<Xl950>();
     return nullptr;
 }

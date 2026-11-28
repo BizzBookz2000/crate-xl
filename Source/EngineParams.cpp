@@ -23,6 +23,7 @@ juce::StringArray cr::lfoShapeNames()   { return { "Sine", "Triangle", "Saw Up",
 
 juce::String cr::ParamInfo::format (float v) const
 {
+    if (text) return text (v);
     if (! choices.isEmpty()) return choices[juce::jlimit (0, choices.size() - 1, juce::roundToInt (v))];
     switch (display)
     {
@@ -277,7 +278,7 @@ bool Engine::getParamInfo (const cr::ParamAddress& a, cr::ParamInfo& info)
             if (! juce::isPositiveAndBelow (a.field, (int) slot->builtin->params.size())) return false;
             const auto& p = slot->builtin->params[(size_t) a.field];
             info.name = p.name; info.minValue = p.minValue; info.maxValue = p.maxValue; info.defaultValue = p.defaultValue;
-            info.suffix = p.suffix; info.choices = p.choices;
+            info.suffix = p.suffix; info.choices = p.choices; info.text = p.text;
             info.logScale = p.suffix.trim() == "Hz" && p.minValue > 0.0f;
             if (p.suffix.trim() == "Hz") info.display = cr::ParamInfo::hertz;
             else if (p.name == "Mix" || p.name == "Depth" || p.name == "Feedback") info.display = cr::ParamInfo::percent;

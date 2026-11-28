@@ -69,6 +69,9 @@ public:
     void setLabel (const juce::String& l) { label = l; repaint(); }
     void setAccent (juce::Colour c);
     void setCompact (bool c) { compact = c; resized(); }
+    // faceplate styling (XL-950 card): text colours and a custom dial look
+    void setTextColours (juce::Colour caps, juce::Colour value) { capsColour = caps; valueColour = value; hasTextColours = true; repaint(); }
+    void setDialLookAndFeel (juce::LookAndFeel* l) { slider.setLookAndFeel (l); }
     void refreshValue();
     const juce::String& getParamPath() const { return path; }
     std::function<void()> onUserChange;
@@ -98,6 +101,8 @@ private:
     std::function<void (float)> setter;
     std::function<juce::String (float)> formatter;
     bool compact = false, updating = false, isCustom = false, checkpointed = false;
+    bool hasTextColours = false;
+    juce::Colour capsColour, valueColour;
 };
 
 // "< value >" stepper with a caption (choke group, pad note, polyphony...)
@@ -157,10 +162,11 @@ public:
 // Effects
 // ============================================================================
 // Card that edits one insert slot: header (power, name, menu) + parameter knobs.
-class EffectCard : public juce::Component
+class EffectCard : public juce::Component, private juce::Timer
 {
 public:
     EffectCard();
+    ~EffectCard() override;
     void setTarget (cr::InsertSlot* slot, const juce::String& baseAddress, int index, juce::Colour accent);
     int getPreferredHeight (int width) const;
     std::function<void (int action)> onAction;   // 1 replace, 2 remove, 3 up, 4 down, 5 open plugin window
@@ -187,6 +193,13 @@ private:
     bool reordering = false;
     bool hasGraph() const;
     void paintResponse (juce::Graphics& g, juce::Rectangle<float> r);
+    // XL-950 faceplate: grey rack panel, black dials, VU meter and converter switch
+    bool faceplate = false;
+    juce::Rectangle<int> plateArea, vuArea, switchArea, badgeArea;
+    float vuNeedle = 0.0f;
+    int plateHeightFor (int width) const;
+    void paintFaceplate (juce::Graphics& g);
+    void timerCallback() override;
 };
 
 // Unlimited (or fixed-size) insert chain: list of effect cards + "Add effect".
@@ -263,6 +276,11 @@ int getMidiAction (const juce::Component& c);   // -1 when untagged
 void showBanksMenu (juce::Component* target);
 
 // Resample submenu for a channel (bounce / bounce with sends / freeze / unfreeze); ids 901-905.
+// Stem separation: split audio into Vocals / Drums / Bass / Other pads in a new bank
+// (progress window, runs in the background).
+void separateStems (cr::SamplePtr source, const juce::String& name);
+void separateStemsFromPad (int bank, int pad);
+void separateStemsFromFile (const juce::File& file);
 void addResampleItems (juce::PopupMenu& m, int stripKey);
 bool handleResampleItem (int menuResult, int stripKey);
 // Live resampling sources for input menus: audio tracks (ids 1000+) and pads of the selected bank (ids 20000+).

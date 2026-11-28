@@ -1674,6 +1674,7 @@ private:
         m.addItem (5, "Clear pad");
         m.addSeparator();
         m.addItem (6, "Record a sample...");
+        m.addItem (8, "Separate stems to a new bank (vocals, drums, bass, other)", e.padSample (b, p) != nullptr);
         m.addItem (7, "MIDI setup...");
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&padMenuBtn), [this, b, p] (int r)
         {
@@ -1685,6 +1686,7 @@ private:
             else if (r == 5) en.clearPad (b, p);
             else if (r == 6) showRecorderDialog (b, p);
             else if (r == 7) showPadMidiSetup (b, p, &padMenuBtn);
+            else if (r == 8) { separateStemsFromPad (b, p); return; }
             ViewBase::broadcast();
         });
     }

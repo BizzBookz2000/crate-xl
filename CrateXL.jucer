@@ -3,7 +3,7 @@
 <!-- Crate XL for Android. Generate the Android Studio project with the Projucer
      (build-android.sh / build-android.bat do this for you), then build the APK. -->
 <JUCERPROJECT name="Crate XL" projectType="guiapp" defines="JUCE_WEB_BROWSER=0&#10;JUCE_USE_CURL=0&#10;JUCE_DISPLAY_SPLASH_SCREEN=0&#10;JUCE_MODAL_LOOPS_PERMITTED=0"
-              bundleIdentifier="com.illahtainment.cratexl" version="1.3.4" companyName="ILLAHTAINMENT"
+              bundleIdentifier="com.illahtainment.cratexl" version="1.3.5" companyName="ILLAHTAINMENT"
               companyCopyright="Copyright (c) ILLAHTAINMENT. All rights reserved."
               id="CrXL01" useAppConfig="0" addUsingNamespaceToJuceHeader="0"
               jucerFormatVersion="1" cppLanguageStandard="17">
@@ -23,6 +23,9 @@
       <FILE id="7yfJs1" name="EngineMidi.cpp" compile="1" resource="0" file="Source/EngineMidi.cpp"/>
       <FILE id="ON43xK" name="EngineParams.cpp" compile="1" resource="0" file="Source/EngineParams.cpp"/>
       <FILE id="mTecQo" name="EngineResample.cpp" compile="1" resource="0" file="Source/EngineResample.cpp"/>
+      <FILE id="stEmSp" name="EngineStems.cpp" compile="1" resource="0" file="Source/EngineStems.cpp"/>
+      <FILE id="stEmHd" name="StemSplit.h" compile="0" resource="0" file="Source/StemSplit.h"/>
+      <FILE id="xlDspH" name="XLDsp.h" compile="0" resource="0" file="Source/XLDsp.h"/>
       <FILE id="Xsf2o3" name="EngineSamples.cpp" compile="1" resource="0" file="Source/EngineSamples.cpp"/>
       <FILE id="gyrDO1" name="EngineSequencer.cpp" compile="1" resource="0" file="Source/EngineSequencer.cpp"/>
       <FILE id="xkxwnQ" name="EngineVoices.cpp" compile="1" resource="0" file="Source/EngineVoices.cpp"/>

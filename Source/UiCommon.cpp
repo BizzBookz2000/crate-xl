@@ -323,6 +323,7 @@ Knob::Knob (const juce::String& l) : label (l)
 
 Knob::~Knob()
 {
+    slider.setLookAndFeel (nullptr);
     auto& k = liveKnobs();
     k.erase (std::remove (k.begin(), k.end(), this), k.end());
 }
@@ -425,8 +426,8 @@ void Knob::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds();
     const bool learn = path.isNotEmpty() && Engine::get().isMidiLearnArmedFor (path);
-    drawCaps (g, label, r.removeFromTop (compact ? 12 : 14), juce::Justification::centred, learn ? Pal::accent : Pal::textFaint, compact ? 9.0f : 9.5f);
-    g.setColour (isEnabled() ? Pal::text : Pal::textFaint);
+    drawCaps (g, label, r.removeFromTop (compact ? 12 : 14), juce::Justification::centred, learn ? Pal::accent : (hasTextColours ? capsColour : Pal::textFaint), compact ? 9.0f : 9.5f);
+    g.setColour (hasTextColours ? valueColour : (isEnabled() ? Pal::text : Pal::textFaint));
     g.setFont (Fonts::digits (compact ? 10.5f : 11.5f));
     g.drawFittedText (isEnabled() ? valueText() : juce::String ("-"), r.removeFromBottom (compact ? 13 : 15), juce::Justification::centred, 1, 0.7f);
     if (path.isNotEmpty())
@@ -565,6 +566,67 @@ void showEffectMenu (juce::Component* target, std::function<void (const juce::St
     });
 }
 
+// ---------------------------------------------------------------------------
+// XL-950 faceplate pieces
+namespace xlface
+{
+const juce::Colour plateTop (0xffd3d3ce), plateBottom (0xffb7b7b1), ink (0xff26272a), inkSoft (0xff4a4b4e), red (0xffb3221c);
+
+struct DialLnF : juce::LookAndFeel_V4
+{
+    void drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float start, float end, juce::Slider&) override
+    {
+        auto r = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h);
+        const float size = juce::jmin (r.getWidth(), r.getHeight());
+        auto c = r.withSizeKeepingCentre (size, size);
+        const auto ctr = c.getCentre();
+        const float outer = size * 0.5f - 1.0f;
+        // scale ticks 0..10
+        for (int t = 0; t <= 50; ++t)
+        {
+            const float a = start + (end - start) * (float) t / 50.0f;
+            const bool major = t % 5 == 0;
+            const float r1 = outer * (major ? 0.80f : 0.86f), r2 = outer;
+            g.setColour (inkSoft.withAlpha (major ? 1.0f : 0.6f));
+            g.drawLine (ctr.x + r1 * std::sin (a), ctr.y - r1 * std::cos (a), ctr.x + r2 * std::sin (a), ctr.y - r2 * std::cos (a), major ? 1.4f : 0.8f);
+        }
+        // skirt + cap
+        const float skirt = outer * 0.74f, cap = outer * 0.56f;
+        g.setColour (juce::Colours::black.withAlpha (0.28f));
+        g.fillEllipse (juce::Rectangle<float> (skirt * 2, skirt * 2).withCentre (ctr.translated (0.0f, 2.0f)));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2c2c2e), ctr.x, ctr.y - skirt, juce::Colour (0xff0b0b0c), ctr.x, ctr.y + skirt, false));
+        g.fillEllipse (juce::Rectangle<float> (skirt * 2, skirt * 2).withCentre (ctr));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3a3a3d), ctr.x - cap * 0.5f, ctr.y - cap * 0.7f, juce::Colour (0xff121213), ctr.x + cap * 0.4f, ctr.y + cap, true));
+        g.fillEllipse (juce::Rectangle<float> (cap * 2, cap * 2).withCentre (ctr));
+        g.setColour (juce::Colours::white.withAlpha (0.08f));
+        g.drawEllipse (juce::Rectangle<float> (cap * 2, cap * 2).withCentre (ctr), 1.0f);
+        // pointer
+        const float a = start + pos * (end - start);
+        const float p1 = cap * 0.25f, p2 = skirt * 0.92f;
+        g.setColour (juce::Colour (0xfff1ede2));
+        g.drawLine (ctr.x + p1 * std::sin (a), ctr.y - p1 * std::cos (a), ctr.x + p2 * std::sin (a), ctr.y - p2 * std::cos (a), juce::jmax (2.0f, size * 0.045f));
+    }
+};
+
+DialLnF& dialLnF() { static DialLnF l; return l; }
+
+void screw (juce::Graphics& g, juce::Point<float> p, float r)
+{
+    g.setColour (juce::Colour (0xff8d8d88));
+    g.fillEllipse (p.x - r, p.y - r, r * 2, r * 2);
+    g.setColour (juce::Colour (0xff3c3c3a));
+    g.drawLine (p.x - r * 0.6f, p.y - r * 0.6f, p.x + r * 0.6f, p.y + r * 0.6f, 1.2f);
+    g.drawLine (p.x - r * 0.6f, p.y + r * 0.6f, p.x + r * 0.6f, p.y - r * 0.6f, 1.2f);
+}
+
+// VU scale position (0..1) for a level in VU (0 VU = -18 dBFS)
+float vuPos (float vu)
+{
+    const float lo = std::pow (10.0f, -20.0f / 20.0f), hi = std::pow (10.0f, 3.0f / 20.0f);
+    return juce::jlimit (0.0f, 1.08f, (std::pow (10.0f, vu / 20.0f) - lo) / (hi - lo));
+}
+} // namespace xlface
+
 EffectCard::EffectCard()
 {
     addAndMakeVisible (power);
@@ -585,6 +647,8 @@ EffectCard::EffectCard()
     openBtn.onClick = [this] { if (slot && slot->plugin) PluginWindow::show (*slot->plugin); };
 }
 
+EffectCard::~EffectCard() { stopTimer(); }
+
 void EffectCard::setTarget (cr::InsertSlot* s, const juce::String& b, int idx, juce::Colour a)
 {
     slot = s;
@@ -596,7 +660,22 @@ void EffectCard::setTarget (cr::InsertSlot* s, const juce::String& b, int idx, j
     knobs.clear();
     choices.clear();
     openBtn.setVisible (s && s->plugin);
-    if (s && s->builtin)
+    faceplate = s && s->builtin && s->builtin->getType() == "XL-950";
+    if (faceplate) startTimerHz (30); else stopTimer();
+    if (faceplate)
+    {
+        // four dials; the converter switch is drawn on the plate
+        for (int i = 0; i < 4; ++i)
+        {
+            auto* k = knobs.add (new Knob());
+            k->setParam (base + juce::String (i));
+            k->setDialLookAndFeel (&xlface::dialLnF());
+            k->setTextColours (xlface::ink, xlface::inkSoft);
+            k->onUserChange = [this] { repaint (graphArea); };
+            addAndMakeVisible (k);
+        }
+    }
+    else if (s && s->builtin)
     {
         for (int i = 0; i < (int) s->builtin->params.size(); ++i)
         {
@@ -643,8 +722,14 @@ bool EffectCard::hasGraph() const
     return slot != nullptr && slot->builtin != nullptr && slot->builtin->hasFrequencyResponse();
 }
 
+int EffectCard::plateHeightFor (int width) const
+{
+    return width - 16 >= 440 ? 150 : 228;
+}
+
 int EffectCard::getPreferredHeight (int width) const
 {
+    if (faceplate) return 36 + 104 + plateHeightFor (width) + 8;
     const int perRow = juce::jmax (1, (width - 16) / 64);
     const int items = knobs.size() + choices.size();
     const int rows = (items + perRow - 1) / perRow;
@@ -717,6 +802,140 @@ void EffectCard::paint (juce::Graphics& g)
             g.fillEllipse ((float) (getWidth() - 50 + gx * 5), (float) (11 + gy * 5), 2.5f, 2.5f);
     }
     if (hasGraph()) paintResponse (g, graphArea.toFloat());
+    if (faceplate) paintFaceplate (g);
+}
+
+void EffectCard::paintFaceplate (juce::Graphics& g)
+{
+    using namespace xlface;
+    auto pr = plateArea.toFloat();
+    g.setGradientFill (juce::ColourGradient (plateTop, pr.getX(), pr.getY(), plateBottom, pr.getX(), pr.getBottom(), false));
+    g.fillRoundedRectangle (pr, 5.0f);
+    g.setColour (juce::Colours::white.withAlpha (0.35f));
+    g.drawHorizontalLine ((int) pr.getY() + 1, pr.getX() + 4.0f, pr.getRight() - 4.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.45f));
+    g.drawRoundedRectangle (pr.reduced (0.5f), 5.0f, 1.0f);
+    screw (g, { pr.getX() + 8.0f, pr.getY() + 8.0f }, 3.5f);
+    screw (g, { pr.getRight() - 8.0f, pr.getY() + 8.0f }, 3.5f);
+    screw (g, { pr.getX() + 8.0f, pr.getBottom() - 8.0f }, 3.5f);
+    screw (g, { pr.getRight() - 8.0f, pr.getBottom() - 8.0f }, 3.5f);
+
+    // badge
+    auto b = badgeArea.toFloat();
+    g.setColour (juce::Colour (0xff141414));
+    g.fillRoundedRectangle (b, 2.5f);
+    g.setColour (juce::Colour (0xff5a5a5a));
+    g.drawRoundedRectangle (b.reduced (2.0f), 1.5f, 0.8f);
+    g.setColour (juce::Colour (0xfff2f2ee));
+    g.setFont (juce::Font (juce::FontOptions (17.0f, juce::Font::bold)));
+    auto bt = b.reduced (8.0f, 0.0f);
+    g.drawText ("XL-950", bt.removeFromLeft (70.0f), juce::Justification::centredLeft);
+    if (bt.getWidth() > 70.0f)
+    {
+        g.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)).withExtraKerningFactor (0.18f));
+        g.drawText ("ILLAHTAINMENT", bt.removeFromTop (bt.getHeight() * 0.55f), juce::Justification::bottomLeft);
+        g.setColour (juce::Colour (0xffa8a8a4));
+        g.setFont (juce::Font (juce::FontOptions (6.5f)).withExtraKerningFactor (0.15f));
+        g.drawText ("FILTER & TAPE AMPLIFIER", bt, juce::Justification::topLeft);
+    }
+    // power LED
+    const bool on = slot != nullptr && ! slot->bypass;
+    const juce::Point<float> led (b.getRight() + 16.0f, b.getCentreY());
+    if (led.x + 8.0f < pr.getRight() - 16.0f)
+    {
+        g.setColour (juce::Colour (0xff5d5d5a));
+        g.fillEllipse (led.x - 7.0f, led.y - 7.0f, 14.0f, 14.0f);
+        g.setGradientFill (juce::ColourGradient (on ? juce::Colour (0xffff5a4a) : juce::Colour (0xff5a1a16), led.x - 2.0f, led.y - 2.0f,
+                                                 on ? juce::Colour (0xffa0100a) : juce::Colour (0xff2a0a08), led.x + 4.0f, led.y + 4.0f, true));
+        g.fillEllipse (led.x - 5.0f, led.y - 5.0f, 10.0f, 10.0f);
+    }
+    // model text on the right
+    auto rt = juce::Rectangle<float> (led.x + 14.0f, b.getY(), pr.getRight() - 18.0f - (led.x + 14.0f), b.getHeight());
+    if (rt.getWidth() > 150.0f)
+    {
+        g.setColour (ink);
+        g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)).withExtraKerningFactor (0.14f));
+        g.drawText ("SAMPLER FILTER / TAPE PROCESSOR", rt.removeFromTop (rt.getHeight() * 0.55f), juce::Justification::bottomRight);
+        g.setColour (inkSoft);
+        g.setFont (juce::Font (juce::FontOptions (7.5f)).withExtraKerningFactor (0.2f));
+        g.drawText ("MODEL XL-950", rt, juce::Justification::topRight);
+    }
+
+    // VU meter
+    auto v = vuArea.toFloat();
+    g.setColour (juce::Colour (0xff111111));
+    g.fillRoundedRectangle (v, 4.0f);
+    auto face = v.reduced (5.0f);
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff5e9c8), face.getCentreX(), face.getY(), juce::Colour (0xffe2cf9e), face.getCentreX(), face.getBottom(), false));
+    g.fillRoundedRectangle (face, 2.0f);
+    const juce::Point<float> pivot (face.getCentreX(), face.getBottom() + face.getHeight() * 0.35f);
+    const float radius = face.getHeight() * 1.05f;
+    const float a0 = -0.80f, a1 = 0.80f;   // radians either side of vertical
+    auto angleFor = [a0, a1] (float vu) { return a0 + (a1 - a0) * xlface::vuPos (vu); };
+    auto pt = [&pivot] (float a, float rad) { return juce::Point<float> (pivot.x + rad * std::sin (a), pivot.y - rad * std::cos (a)); };
+    {
+        juce::Graphics::ScopedSaveState ss (g);
+        g.reduceClipRegion (face.toNearestInt());
+        juce::Path arc, redArc;
+        arc.addCentredArc (pivot.x, pivot.y, radius * 0.78f, radius * 0.78f, 0.0f, angleFor (-20.0f), angleFor (0.0f), true);
+        redArc.addCentredArc (pivot.x, pivot.y, radius * 0.78f, radius * 0.78f, 0.0f, angleFor (0.0f), angleFor (3.0f), true);
+        g.setColour (ink);
+        g.strokePath (arc, juce::PathStrokeType (1.2f));
+        g.setColour (red);
+        g.strokePath (redArc, juce::PathStrokeType (3.0f));
+        g.setFont (juce::Font (juce::FontOptions (juce::jmax (7.0f, face.getHeight() * 0.13f), juce::Font::bold)));
+        for (float m : { -20.0f, -10.0f, -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f })
+        {
+            const float a = angleFor (m);
+            g.setColour (m > 0.0f ? red : ink);
+            g.drawLine ({ pt (a, radius * 0.78f), pt (a, radius * 0.86f) }, 1.0f);
+            if (m == -20.0f || m == -10.0f || m == -5.0f || m == -3.0f || m >= 0.0f)
+            {
+                const auto tp = pt (a, radius * 0.95f);
+                g.drawText (m > 0.0f ? "+" + juce::String ((int) m) : juce::String ((int) std::abs (m)), juce::Rectangle<float> (22.0f, 10.0f).withCentre (tp), juce::Justification::centred);
+            }
+        }
+        g.setColour (ink);
+        g.setFont (juce::Font (juce::FontOptions (juce::jmax (9.0f, face.getHeight() * 0.2f), juce::Font::bold)));
+        g.drawText ("VU", face.withTrimmedTop (face.getHeight() * 0.45f).withHeight (face.getHeight() * 0.3f), juce::Justification::centred);
+        // needle
+        const float na = a0 + (a1 - a0) * vuNeedle;
+        g.setColour (juce::Colour (0xff1a1a1a));
+        g.drawLine ({ pt (na, radius * 0.25f), pt (na, radius * 0.92f) }, 1.4f);
+    }
+    g.setColour (juce::Colours::white.withAlpha (0.12f));
+    g.fillRoundedRectangle (face.withHeight (face.getHeight() * 0.35f), 2.0f);
+
+    // converter switch: CLEAN | lever | 12-BIT
+    const bool bits = slot != nullptr && slot->builtin != nullptr && slot->builtin->getChoice (4) == 1;
+    auto sw = switchArea.toFloat();
+    auto lever = sw.withSizeKeepingCentre (34.0f, 16.0f);
+    g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)).withExtraKerningFactor (0.1f));
+    g.setColour (bits ? inkSoft : ink);
+    g.drawText ("CLEAN", juce::Rectangle<float> (sw.getX(), sw.getY(), lever.getX() - sw.getX() - 4.0f, sw.getHeight()), juce::Justification::centredRight);
+    g.setColour (bits ? red : inkSoft);
+    g.drawText ("12-BIT", juce::Rectangle<float> (lever.getRight() + 4.0f, sw.getY(), sw.getRight() - lever.getRight() - 4.0f, sw.getHeight()), juce::Justification::centredLeft);
+    g.setColour (juce::Colour (0xff6e6e6a));
+    g.fillRoundedRectangle (lever, 8.0f);
+    g.setColour (juce::Colour (0xff303030));
+    g.drawRoundedRectangle (lever, 8.0f, 1.0f);
+    const auto knobC = juce::Point<float> (bits ? lever.getRight() - 8.0f : lever.getX() + 8.0f, lever.getCentreY());
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff4f4f0), knobC.x - 3.0f, knobC.y - 4.0f, juce::Colour (0xff9a9a96), knobC.x + 4.0f, knobC.y + 5.0f, true));
+    g.fillEllipse (knobC.x - 6.5f, knobC.y - 6.5f, 13.0f, 13.0f);
+
+    g.setColour (inkSoft);
+    g.setFont (juce::Font (juce::FontOptions (7.5f)).withExtraKerningFactor (0.15f));
+    g.drawText (juce::String (juce::CharPointer_UTF8 ("\xc2\xa9 ILLAHTAINMENT. ALL RIGHTS RESERVED.")),
+                juce::Rectangle<float> (pr.getX(), pr.getBottom() - 13.0f, pr.getWidth(), 10.0f), juce::Justification::centred);
+}
+
+void EffectCard::timerCallback()
+{
+    if (! faceplate || slot == nullptr || slot->builtin == nullptr) return;
+    const float vu = slot->bypass ? -60.0f : slot->builtin->getMeterDb() + 18.0f;
+    const float target = xlface::vuPos (vu);
+    const float next = vuNeedle + (target - vuNeedle) * 0.28f;   // ~300 ms VU ballistics at 30 Hz
+    if (std::abs (next - vuNeedle) > 0.0005f) { vuNeedle = next; repaint (vuArea); }
 }
 
 // Grab the card by its title bar to move it up or down the chain.
@@ -727,6 +946,12 @@ void EffectCard::mouseMove (const juce::MouseEvent& e)
 
 void EffectCard::mouseDown (const juce::MouseEvent& e)
 {
+    if (faceplate && slot != nullptr && slot->builtin != nullptr && switchArea.contains (e.getPosition()) && ! e.mods.isPopupMenu())
+    {
+        Engine::get().setParamValue (cr::ParamAddress::parse (base + "4"), slot->builtin->getChoice (4) == 1 ? 0.0f : 1.0f, true);
+        repaint();
+        return;
+    }
     reordering = e.y < 32 && slot != nullptr && onReorderDrag != nullptr && ! e.mods.isPopupMenu();
     if (reordering) onReorderDrag (0, e);
 }
@@ -752,6 +977,36 @@ void EffectCard::resized()
     graphArea = {};
     if (hasGraph()) { graphArea = r.removeFromTop (98); r.removeFromTop (6); }
     if (openBtn.isVisible()) { openBtn.setBounds (r.removeFromTop (26).withWidth (juce::jmin (160, r.getWidth()))); r.removeFromTop (4); }
+    if (faceplate)
+    {
+        plateArea = r.removeFromTop (plateHeightFor (getWidth()));
+        auto p = plateArea.reduced (16, 8);
+        p.removeFromBottom (10);   // copyright line
+        badgeArea = p.removeFromTop (26).withWidth (juce::jmin (190, p.getWidth() - 40));
+        p.removeFromTop (4);
+        const bool wide = plateArea.getWidth() >= 440;
+        juce::Rectangle<int> meterCol;
+        if (wide)
+        {
+            const int cw = p.getWidth() / 5;
+            for (int i = 0; i < knobs.size(); ++i)
+            {
+                const int col = i < 2 ? i : i + 1;
+                knobs[i]->setBounds (p.getX() + col * cw, p.getY(), cw, p.getHeight());
+            }
+            meterCol = juce::Rectangle<int> (p.getX() + 2 * cw, p.getY(), cw, p.getHeight()).reduced (2, 0);
+        }
+        else
+        {
+            meterCol = p.removeFromTop (96);
+            p.removeFromTop (2);
+            const int cw = p.getWidth() / 4;
+            for (int i = 0; i < knobs.size(); ++i) knobs[i]->setBounds (p.getX() + i * cw, p.getY(), cw, p.getHeight());
+        }
+        switchArea = meterCol.removeFromBottom (22).withSizeKeepingCentre (juce::jmin (130, meterCol.getWidth()), 22);
+        vuArea = meterCol.withSizeKeepingCentre (juce::jmin (meterCol.getWidth(), juce::roundToInt (meterCol.getHeight() * 1.9f)), meterCol.getHeight() - 4);
+        return;
+    }
     const int perRow = juce::jmax (1, r.getWidth() / 64);
     const int w = r.getWidth() / perRow;
     int i = 0;
@@ -1166,6 +1421,71 @@ private:
     BounceOptions options;
     juce::String error;
 };
+}
+
+namespace
+{
+class StemSplitJob : public juce::ThreadWithProgressWindow
+{
+public:
+    StemSplitJob (cr::SamplePtr s, juce::File f, juce::String n)
+        : juce::ThreadWithProgressWindow ("Separating stems...", true, true), source (std::move (s)), file (std::move (f)), name (std::move (n)) {}
+    void run() override
+    {
+        auto& e = Engine::get();
+        if (source == nullptr && file.existsAsFile())
+        {
+            setStatusMessage ("Loading " + file.getFileName());
+            source = e.loadSample (file, false);
+        }
+        setStatusMessage ("Splitting " + name + " into vocals, drums, bass and other");
+        ok = e.renderStems (source, name, set, error, [this] (float p) { setProgress (p); return ! threadShouldExit(); });
+    }
+    void threadComplete (bool cancelled) override
+    {
+        if (ok && ! cancelled)
+        {
+            const int b = Engine::get().placeStemsInNewBank (set, error);
+            ViewBase::broadcast();
+            if (b >= 0)
+            {
+                Nav::showView (Nav::performance);
+                Nav::setStatus ("Stems on " + cr::bankLetter (b) + ".1-" + cr::bankLetter (b) + ".5: Vocals, Drums, Bass, Other, Full mix");
+            }
+            if (error.isNotEmpty()) showError ("Separate stems", error);
+        }
+        else if (! cancelled && error != "Cancelled.") showError ("Separate stems", error.isNotEmpty() ? error : juce::String ("Couldn't separate this audio."));
+        delete this;
+    }
+private:
+    cr::SamplePtr source;
+    juce::File file;
+    juce::String name, error;
+    Engine::StemSet set;
+    bool ok = false;
+};
+}
+
+void separateStems (cr::SamplePtr source, const juce::String& name)
+{
+    if (source == nullptr) { showError ("Separate stems", "There's no sample to separate."); return; }
+    if (Engine::get().firstFreeBank() < 0) { showError ("Separate stems", "All 128 banks are in use. Delete a bank first."); return; }
+    (new StemSplitJob (std::move (source), {}, name))->launchThread();
+}
+
+void separateStemsFromPad (int bank, int pad)
+{
+    auto& e = Engine::get();
+    auto s = e.padSample (bank, pad);
+    const auto& p = e.session().banks[(size_t) bank].pads[(size_t) pad];
+    separateStems (s, p.name.isNotEmpty() ? p.name : (s ? s->name : juce::String()));
+}
+
+void separateStemsFromFile (const juce::File& file)
+{
+    if (! file.existsAsFile()) return;
+    if (Engine::get().firstFreeBank() < 0) { showError ("Separate stems", "All 128 banks are in use. Delete a bank first."); return; }
+    (new StemSplitJob (nullptr, file, file.getFileNameWithoutExtension()))->launchThread();
 }
 
 void addResampleItems (juce::PopupMenu& m, int key)

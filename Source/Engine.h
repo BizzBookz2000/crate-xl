@@ -360,6 +360,14 @@ public:
     bool exportClip (int track, int clip, const juce::File& file, juce::String& error);
     int firstEmptyPad (int bank, int from = 0);                         // -1 when the bank is full
 
+    // Stem separation (EngineStems.cpp). renderStems runs on any thread and writes
+    // Vocals / Drums / Bass / Other WAVs to Samples/Stems/<name>; placeStemsInNewBank
+    // (message thread) loads them onto pads 1-4 of a new bank, with the full mix on pad 5.
+    struct StemSet { juce::String name; juce::StringArray files; cr::SamplePtr full; };
+    cr::SamplePtr padSample (int bank, int pad);
+    bool renderStems (cr::SamplePtr source, const juce::String& name, StemSet& result, juce::String& error, std::function<bool (float)> progress = {});
+    int placeStemsInNewBank (const StemSet& set, juce::String& error);
+
     // Stem import (EngineImport.cpp). prepareStem runs on any thread; addStemTracks on the message thread.
     struct Stem
     {

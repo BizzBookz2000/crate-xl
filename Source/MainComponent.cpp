@@ -927,6 +927,7 @@ void MainComponent::showFileMenu()
     m.addItem (11, "Save " + e.session().banks[(size_t) e.selectedBank.load()].name + " as bank preset...");
     m.addSectionHeader ("Import / export");
     m.addItem (20, "Import audio files to audio tracks...");
+    m.addItem (26, "Separate stems from a song (vocals, drums, bass, other)...");
     m.addItem (21, "Import MIDI file into the current bank...");
     m.addItem (22, "Export working pattern as MIDI...");
     m.addItem (23, "Export audio / stems...");
@@ -979,6 +980,11 @@ void MainComponent::showFileMenu()
                                           if (err.isNotEmpty()) showError ("Import audio", err);
                                           Nav::showSequencer (Nav::song);
                                       });
+                break;
+            case 26:
+                chooser = makeFileChooser ("Separate stems", Engine::getSamplesFolder(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3;*.m4a;*.mp4;*.mov");
+                chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                      [] (const juce::FileChooser& fc) { if (fc.getResult().existsAsFile()) separateStemsFromFile (fc.getResult()); });
                 break;
             case 21:
                 chooser = makeFileChooser ("Import MIDI", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.mid;*.midi");

@@ -13,6 +13,7 @@ struct FxParam
     float value = 0.0f;
     juce::String suffix;
     juce::StringArray choices; // non-empty => integer choice parameter
+    std::function<juce::String (float)> text;   // optional custom value text ("OPEN", "2.4 kHz"...)
 };
 
 class BuiltinEffect
@@ -32,6 +33,10 @@ public:
     virtual bool hasFrequencyResponse() const { return false; }
     virtual double getResponseDb (double /*freq*/, double /*sampleRate*/) const { return 0.0; }
 
+    // Effects with their own output meter (the XL-950 VU). Level in dBFS RMS.
+    virtual bool hasMeter() const { return false; }
+    virtual float getMeterDb() const { return -100.0f; }
+
     std::vector<FxParam> params;
 
     float get (int index) const { return params[(size_t) index].value; }
@@ -49,12 +54,12 @@ public:
 protected:
     void addParam (const juce::String& name, float mn, float mx, float def, const juce::String& suffix = {})
     {
-        params.push_back ({ name, mn, mx, def, def, suffix, {} });
+        params.push_back ({ name, mn, mx, def, def, suffix, {}, {} });
     }
 
     void addChoice (const juce::String& name, const juce::StringArray& choices, int def = 0)
     {
-        params.push_back ({ name, 0.0f, (float) (choices.size() - 1), (float) def, (float) def, {}, choices });
+        params.push_back ({ name, 0.0f, (float) (choices.size() - 1), (float) def, (float) def, {}, choices, {} });
     }
 
     double sampleRate = 44100.0;

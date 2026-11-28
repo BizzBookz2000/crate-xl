@@ -89,6 +89,7 @@ struct ParamInfo
     juce::StringArray choices;
     enum Display { plain = 0, gainDb, panLR, percent, seconds, hertz, semitones };
     int display = plain;
+    std::function<juce::String (float)> text;   // custom value text (built-in effects)
 
     float toNormalised (float v) const
     {

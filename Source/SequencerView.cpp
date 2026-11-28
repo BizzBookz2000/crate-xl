@@ -1042,6 +1042,7 @@ public:
             m.addItem (22, "Slice to pads");
             m.addItem (23, "Slice to pads + MIDI pattern");
             m.addItem (24, "Export as WAV...");
+            m.addItem (25, "Separate stems to a new bank (vocals, drums, bass, other)");
         }
         m.showMenuAsync (juce::PopupMenu::Options(), [this] (int r) { if (r >= 20) audioClipAction (r); else clipAction (r); });
     }
@@ -1078,6 +1079,7 @@ public:
         }
         auto smp = e.clipToSample (t, c);
         if (! smp) { showError ("Convert", "That clip has no audio."); return; }
+        if (r == 25) { separateStems (smp, e.session().audioTracks[(size_t) t].name); return; }
         const int bank = e.selectedBank;
         const int pad = e.firstEmptyPad (bank, e.selectedPad);
         if (pad < 0) { showError ("Convert", "There are no empty pads left in " + cr::bankName (bank) + "."); return; }

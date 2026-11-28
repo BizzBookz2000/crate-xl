@@ -153,9 +153,34 @@ You can also pass `-DCRATE_PRODUCT_NAME="My Name"` when configuring. The build s
 - **Live resampling**: an audio track (or the sample recorder) can record the main out, any bank, AUX return, other audio track, or any pad / instrument output in real time.
 - Right-click an **audio clip** in the song for: Convert to sample, Convert to sampler instrument (keys mode), Slice to pads, Slice to pads + MIDI pattern, and Export as WAV.
 
+### Stem separation
+
+Splits a song or loop into **Vocals, Drums, Bass and Other**. It runs in the app, with no download or internet needed. A 3-minute song takes a few seconds on a computer, and longer on a phone.
+
+- Where to start it:
+  - Right-click a pad, or open the pad menu in the Editor, and choose **Separate stems to a new bank**.
+  - Right-click an audio clip in the song.
+  - Choose **Separate stems from a song...** in the main menu.
+- Where the stems go: they land on pads 1–4 of a new bank, and the original goes on pad 5 (**Full mix**). The WAV files are saved in `Samples/Stems/<name>` in the library folder.
+- Songs longer than a minute stream from disk.
+- How it works: harmonic/percussive median filtering, a stereo-centre cue for vocals and a low-band crossover for bass. The four stems always add back up to the original exactly.
+- Quality: expect some bleed between stems, especially on mono recordings, where vocals and centred instruments share the Vocals stem.
+
 ### Built-in effects
 
-6-band EQ, Compressor (compress / limit / expand), Delay, Stereo Delay, Reverb, Chorus / Flanger (with vibrato), Overdrive, Bit Crusher, Filter, Auto-Pan, Stereo Widener, Slicer and Noise Gate.
+6-band EQ, Compressor (compress / limit / expand), Delay, Stereo Delay, Reverb, Chorus / Flanger (with vibrato), Overdrive, Bit Crusher, Filter, Auto-Pan, Stereo Widener, Slicer, Noise Gate and **XL-950**.
+
+**XL-950** is the ILLAHTAINMENT sampler filter / tape processor. It appears in the insert card as a grey rack faceplate:
+
+| Control | What it does |
+|---|---|
+| Low Pass | 24 dB/oct transistor-style 4-pole, 150 Hz to 20 kHz (10 = open) |
+| Band Pass | Resonant sweep, 120 Hz to 6 kHz (0 = off) |
+| High Pass | 12 dB/oct, 20 Hz to 8 kHz (0 = off) |
+| Tape | 7½ ips portastudio: wow and flutter, saturation, head bump, HF loss |
+| CLEAN / 12-BIT | 12-bit converter clocked at 26 kHz in front of the filters (click the switch) |
+
+The VU meter shows the output level (0 VU = −18 dBFS). The signal runs through the 12-bit stage, then the low pass, high pass, band pass and tape, at 2× oversampling. Double-click a dial to reset it, and right-click it for MIDI learn. Its curve also shows on the channel EQ.
 
 ### Plugin scanning
 
